@@ -234,6 +234,15 @@ test('every replaced version is kept, listed and readable', async () => {
   assert.equal((await json(await menuState(req('/api/menu-state/capiche?history=1')))).body.versions.length, 4);
 });
 
+test('versions count added dishes whether the state keeps one list or one per page', async () => {
+  let prev = (await json(await publish('capiche', { state: { edits: {}, added: [{ n: 1 }, { n: 2 }] }, base: 'v1', prev: null }))).body.t;
+  await publish('capiche-surat', { state: { edits: { '1:0:price': '240' }, added: { 1: [{ name: 'A' }], 2: [{ name: 'B' }, { name: 'C' }] }, removed: ['1:2'] }, base: 'v1', prev: null });
+  const food = (await json(await menuState(req('/api/menu-state/capiche?history=1')))).body.versions[0];
+  const drinks = (await json(await menuState(req('/api/menu-state/capiche-surat?history=1')))).body.versions[0];
+  assert.deepEqual([food.added, drinks.added, drinks.removed, drinks.edits], [2, 3, 1, 1]);
+  assert.ok(prev);
+});
+
 test('a drinks menu that keeps its whole list is summarised by its number of drinks', async () => {
   const bands = [{ type: 'signature', name: 'A' }, { type: 'signature', name: 'B' }, { type: 'soft', lines: [{ name: 'C' }, { name: 'D' }, { name: 'E' }] }];
   await publish('aiko-drinks', { state: { bands }, base: 'v1', prev: null });

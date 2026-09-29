@@ -3622,6 +3622,10 @@ function pvDB(){ return new Promise((res,rej)=>{ const r=indexedDB.open(PV_DB,1)
 function pvPut(id,rec){ return pvDB().then(d=>new Promise((res,rej)=>{
   const tx=d.transaction(PV_STORE,'readwrite'); tx.objectStore(PV_STORE).put(rec,id);
   tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); })); }
+/* chucky-2: say it in the page's bar, not alert() (some phone browsers block alerts too, and then
+   Full Preview did nothing at all). The button opens the preview from a fresh tap, which a pop-up
+   blocker lets through. */
+function pvNotice(msg, id){ try{ MenuState.notice('warn', msg, id? [['Open the preview', ()=>window.open('/preview/#'+id,'_blank')]] : [], 15000); }catch(_){ alert(msg); } }
 async function openFullPreview(){
   const btn=document.getElementById('fullprev');
   const id='job_'+Date.now()+'_'+Math.random().toString(36).slice(2,8);
@@ -3632,10 +3636,10 @@ async function openFullPreview(){
     const bytes=await regenerate();
     await pvPut(id,{ bytes:(bytes instanceof Uint8Array)?bytes:new Uint8Array(bytes),
                      file:PV_FILE, title:PV_TITLE, back:location.pathname, t:Date.now() });
-    if(!win) alert('Your browser blocked the preview tab.\nAllow pop-ups for this site, then press \u201cFull Preview\u201d again.');
+    if(!win) pvNotice('Your browser blocked the preview tab.', id);
   }catch(e){
     try{ await pvPut(id,{error:String((e&&e.message)||e), t:Date.now()}); }catch(_){}
-    if(!win) alert('Could not build the preview: '+((e&&e.message)||e));
+    if(!win) pvNotice('Could not build the preview: '+String((e&&e.message)||e).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))+'.', null);
   }finally{ if(btn){ btn.disabled=false; btn.textContent=label||'Full Preview \u2197'; } }
 }
 (function(){ const b=document.getElementById('fullprev'); if(b) b.addEventListener('click', openFullPreview); })();   // guarded: a missing button must never kill the engine

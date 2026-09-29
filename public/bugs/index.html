@@ -49,6 +49,10 @@ h1{font-size:20px;margin:0;letter-spacing:.02em}
 .acts button:hover{color:var(--ink);border-color:var(--ink)}
 .empty{color:var(--dim);text-align:center;padding:60px 0;font-size:13px;line-height:1.6}
 .empty b{color:var(--ink);font-weight:500}
+.keyform{display:flex;flex-direction:column;align-items:center;gap:10px}
+.keyform input{width:min(300px,86vw);background:#0f0d08;border:1px solid var(--line);border-radius:9px;color:var(--ink);font:inherit;font-size:14px;padding:10px 12px;outline:none;letter-spacing:.06em}
+.keyform input:focus{border-color:var(--red)}
+.keyform button{font-size:12.5px;color:var(--bg);background:var(--ink);border:0;border-radius:8px;padding:9px 16px;cursor:pointer;font-weight:600}
 .lay{position:fixed;inset:0;background:rgba(0,0,0,.82);display:none;align-items:center;justify-content:center;z-index:9;padding:20px;cursor:zoom-out}
 .lay.on{display:flex}
 .lay img{max-width:96vw;max-height:92vh;border-radius:10px}
@@ -79,12 +83,21 @@ h1{font-size:20px;margin:0;letter-spacing:.02em}
   const $ = (s) => document.querySelector(s);
   const list = $('#list');
 
-  function askKey() {
-    const k = prompt('Enter the bug-queue key (BUG_KEY):', KEY || '');
-    if (k === null) return false;
-    KEY = k.trim();
-    try { localStorage.setItem(KEY_STORE, KEY); } catch { /* storage blocked: key lasts for this page only */ }
-    return true;
+  /* The key is typed into the page, not a prompt(): some phone browsers (and apps' built-in
+     browsers) block prompt(), and then the queue could never be opened there. */
+  function keyForm(note) {
+    list.innerHTML = '<form class="empty keyform" id="keyform" autocomplete="off"><div>' + note + '</div>'
+      + '<input type="password" id="keyin" placeholder="BUG_KEY" aria-label="Bug-queue key" autocapitalize="off" autocorrect="off" spellcheck="false">'
+      + '<button type="submit">Open the queue</button></form>';
+    $('#count').textContent = '';
+    const i = $('#keyin'); setTimeout(() => i.focus(), 0);
+    $('#keyform').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const k = i.value.trim(); if (!k) { i.focus(); return; }
+      KEY = k;
+      try { localStorage.setItem(KEY_STORE, KEY); } catch { /* storage blocked: key lasts for this page only */ }
+      load();
+    });
   }
   const auth = () => ({ authorization: 'Bearer ' + KEY });
 
@@ -111,14 +124,17 @@ h1{font-size:20px;margin:0;letter-spacing:.02em}
   const message = (html) => { list.innerHTML = `<div class="empty">${html}</div>`; $('#count').textContent = ''; };
 
   async function load() {
-    if (!KEY) { message('Enter the bug-queue key to see reports. Click <b>Key</b>.'); return; }
+    if (!KEY) { keyForm('Enter the bug-queue key to see reports.'); return; }
     message('Loading…');
     let res, body;
     try {
       res = await fetch('/api/bugs', { headers: auth(), cache: 'no-store' });
       body = await res.json().catch(() => ({}));
     } catch { message('Could not reach the API.'); return; }
-    if (res.status === 403) { message('Wrong key. Click <b>Key</b> to re-enter it.'); return; }
+    if (res.status === 403) {   // forget it, so the minute refresh doesn't wipe the form while it's retyped
+      KEY = ''; try { localStorage.removeItem(KEY_STORE); } catch { /* storage blocked */ }
+      keyForm('That key wasn’t accepted. Check it and try again.'); return;
+    }
     if (res.status === 503) { message('The bug queue’s storage isn’t connected yet.<br>Connect Upstash Redis to this project (see README).'); return; }
     if (!res.ok) { message('The API answered ' + res.status + (body.error ? ': ' + esc(body.error) : '') + '.'); return; }
     BUGS = body.bugs || [];
@@ -169,16 +185,15 @@ h1{font-size:20px;margin:0;letter-spacing:.02em}
         const res = await fetch('/api/bug/' + encodeURIComponent(a.dataset.id), {
           method: 'PATCH', headers: { 'content-type': 'application/json', ...auth() }, body: JSON.stringify(patch),
         });
-        if (!res.ok) alert('Could not update the report (server said ' + res.status + ').');
-      } catch { alert('Could not reach the API.'); }
+        if (!res.ok) { a.disabled = false; a.textContent = 'Failed (' + res.status + ') — try again'; return; }
+      } catch { a.disabled = false; a.textContent = 'Offline — try again'; return; }
       load();
     }
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#lay').classList.remove('on'); });
   $('#refresh').addEventListener('click', load);
-  $('#rekey').addEventListener('click', () => { if (askKey()) load(); });
+  $('#rekey').addEventListener('click', () => keyForm('Enter the bug-queue key.'));
 
-  if (!KEY) askKey();
   load();
   setInterval(() => { if (!document.hidden && KEY) load(); }, 60000);
 })();

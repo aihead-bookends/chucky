@@ -37,11 +37,13 @@ export const histPrefix = (editor) => 'menu_hist_' + editor + '_';
 export const HIST_KEEP = 50;
 export const HIST_TTL_S = 60 * 60 * 24 * 365;
 
+// how many items a state's list holds: a plain list, or (the drinks menus) one list per page
+const count = (v) => (Array.isArray(v) ? v.length : v && typeof v === 'object' ? Object.values(v).reduce((n, x) => n + count(x), 0) : 0);
 const summary = (rec, current) => {
   const s = rec.state || {};
   return {
     t: rec.t, base: rec.base, current,
-    edits: Object.keys(s.edits || {}).length, removed: (s.removed || []).length, added: (s.added || []).length,
+    edits: Object.keys(s.edits || {}).length, removed: count(s.removed), added: count(s.added),
     // the Aiko drinks menu keeps its whole list of drinks (bands; the soft drinks share one) instead of edits
     ...(Array.isArray(s.bands) ? { drinks: s.bands.reduce((n, b) => n + (Array.isArray(b && b.lines) ? b.lines.length : 1), 0) } : {}),
   };

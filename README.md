@@ -65,7 +65,7 @@ published menus carry over.
 | `/chucky/` | Editor picker (passphrase `chucky`: a client-side check that keeps casual visitors out, not real access control) |
 | `/capiche/` `/aiko/` `/churnd/` `/beshak/` | Food editors |
 | `/drinks/` `/capiche-surat/` `/capiche-ahm/` | Drinks editors (Aiko, Capiche Surat, Capiche Ahmedabad) |
-| `/bugs/` | Bug-report queue (asks for `BUG_KEY`) |
+| `/bugs/` | Bug-report queue (asks for `BUG_KEY` in the page, and remembers it on that device) |
 | `/menu/` | Secret menu: links to the customer menu and the back door |
 | `/preview/` | Full-size viewer the editors' "Full Preview ↗" button opens |
 
@@ -206,6 +206,15 @@ prints and how to fix it, and Export is paused until the name fits.
   were left behind. They now use the same row positions and line counts the PDF is written with.
 - Added dishes wrapped their description at a fixed 56 characters, whatever the column, so HOT CHIPS
   ran under its prices. They now use the price-column rule above.
+- The fieldmap glued six descriptions' printed lines together with no space: "CHERRY TOMATO,STONE
+  FRUIT", "HOTHONEY", "OLIVE OIL,CHILLI" and three more. The menu printed fine until someone edited
+  one of them; the edit then printed the glued words. The ALFREDO edit already had: the 29 Sep menu
+  prints "FRIED LEEKS,CHIMICHURRI". The fieldmap now has the spaces (read from the PDF's own lines),
+  and so does the starting menu. **A published menu that still holds the old ALFREDO text** (the live
+  site's does) keeps it until that description is fixed in the editor and published. The editor
+  underlines it as a spelling issue.
+- LABNEH and TRIPOLINE were flagged as spelling mistakes on the starting menu; they're in the
+  dictionary now, so every page opens "All clear".
 
 **Known quirk (inherited from the original):** in the edit boxes, long descriptions can wrap in the
 middle of a word, because the engine joins words with non-breaking spaces. It only affects how text
