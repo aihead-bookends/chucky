@@ -412,6 +412,60 @@ input.volu:focus{border-color:var(--ac-line)}
 #fontnote{position:fixed;left:50%;bottom:18px;transform:translateX(-50%) translateY(8px);max-width:min(560px,92vw);background:#2b2416;color:var(--cream);font-size:12.5px;padding:9px 14px;border-radius:9px;opacity:0;pointer-events:none;transition:.25s;z-index:90}
 #fontnote.on{opacity:1;transform:translateX(-50%) translateY(0)}
 
+/* ==== the Aiko drinks editor: one-line fields, and a gradient per drink ==== */
+input.name{background:var(--well);border:1px solid var(--line2);border-radius:7px;padding:8px 10px;margin:0;min-width:120px}
+input.name:focus{border-color:var(--ac-line);background:#12100a;box-shadow:none}
+input.desc{display:block;width:100%;max-width:none;background:var(--well);border:1px solid var(--line2);border-radius:7px;padding:8px 10px;margin:9px 0 0;font-family:var(--mono);font-size:13px}
+input.desc:focus{border-color:var(--ac-line);box-shadow:none}
+input.name.err,input.desc.err{border-color:var(--bad)}
+.warnline{flex-basis:100%;display:flex;gap:10px;align-items:center;margin-top:8px;font-size:11.5px;color:var(--bad)}
+.warnline.soft{color:var(--muted)}
+.warnline .iglink{font:inherit;color:var(--muted);text-decoration:underline;padding:0}
+.gradrow{display:flex;align-items:center;gap:8px;margin-top:11px;flex-wrap:wrap}
+.gradlbl{font-size:10.5px;color:var(--muted);letter-spacing:.12em;text-transform:uppercase}
+.gradsw{width:74px;height:24px;border-radius:6px;border:1px solid var(--line2);flex:none}
+.gradrow input[type=color]{-webkit-appearance:none;appearance:none;width:26px;height:26px;border:1px solid var(--line2);border-radius:6px;background:none;padding:0;cursor:pointer}
+.gradrow input[type=color]::-webkit-color-swatch-wrapper{padding:2px}
+.gradrow input[type=color]::-webkit-color-swatch{border:none;border-radius:4px}
+.autogr{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:500;color:var(--on-ac);background:var(--ac);border-radius:7px;padding:6px 11px}
+.autogr:hover{filter:brightness(1.08)}
+
+/* ==== Beshak: a labelled form per dish (name, size, price, description) and allergen checkboxes ==== */
+[data-editor="beshak"] .secgrp{margin-bottom:26px}
+[data-editor="beshak"] .sechd{font-family:var(--serif);font-size:21px;font-weight:500;letter-spacing:.2px;color:var(--cream);border-top:1px solid var(--line);margin:0 0 12px;padding-top:18px;display:flex;align-items:baseline;gap:10px;scroll-margin-top:14px}
+[data-editor="beshak"] .secgrp:first-child .sechd{border-top:0;padding-top:4px}
+[data-editor="beshak"] .sechd .cnt{font-size:11.5px;font-family:var(--mono);color:var(--muted)}
+[data-editor="beshak"] .card{position:relative}
+[data-editor="beshak"] .card.gone{opacity:.42}
+[data-editor="beshak"] .card.gone input,[data-editor="beshak"] .card.gone textarea,[data-editor="beshak"] .card.gone .afchk{pointer-events:none;filter:grayscale(1)}
+[data-editor="beshak"] .card.added{border-color:var(--ac-line);background:var(--card2)}
+[data-editor="beshak"] .card.added.bad{border-color:rgba(229,103,94,.6)}
+.chead{display:flex;align-items:center;margin-bottom:9px}
+.cnum{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.cdel{margin-left:auto;color:var(--muted);font-size:13px;line-height:1;padding:4px 7px;border-radius:7px;border:1px solid transparent}
+.cdel:hover{color:var(--bad);border-color:rgba(229,103,94,.45)}
+.frow{display:grid;grid-template-columns:74px 1fr;gap:8px 10px;align-items:center;margin-bottom:8px}
+.frow.wide{align-items:start}
+.flbl{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);padding-top:1px}
+.frow input,.frow textarea{width:100%;background:var(--well);border:1px solid var(--line2);border-radius:8px;color:var(--cream);font:inherit;font-size:13px;padding:7px 10px;transition:border-color .13s}
+.frow textarea{min-height:52px;resize:vertical;line-height:1.5}
+.frow input:focus,.frow textarea:focus{outline:none;border-color:var(--ac-line)}
+.frow.bad input,.frow.bad textarea{border-color:rgba(229,103,94,.6)}
+.frow.warn input,.frow.warn textarea{border-color:rgba(224,145,43,.5)}
+.fnote{grid-column:2;font-size:11px;color:var(--warn)}
+.frow.bad .fnote{color:var(--bad)}
+.frow .fnote:empty{display:none}
+[data-editor="beshak"] .card .afchk{margin-top:10px}
+.mkico{display:inline-flex}
+.mkico svg{width:14px;height:15px}
+.addnote{grid-column:1/-1;font-size:11px;color:var(--bad);margin-top:2px}
+.addnote:empty{display:none}
+.additem{width:100%;margin-top:4px;padding:9px;border:1px dashed var(--line2);border-radius:10px;color:var(--muted);font-size:12px;letter-spacing:.02em;transition:.13s}
+.additem:hover{color:var(--cream);border-color:var(--ac-line);background:var(--ac-soft)}
+/* the export celebration: the wordmark over the line, and it never blocks a click */
+[data-editor="beshak"] #celebrate{pointer-events:none}
+[data-editor="beshak"] #celebrate .cbmark{font-family:var(--serif);font-size:30px;letter-spacing:.16em;color:var(--ac)}
+
 /* ---- responsive ---- */
 @media(max-width:1500px){ .brand .tag{display:none} }   /* room for the live chip on one header row */
 @media(max-width:1120px){ main.app{grid-template-columns:190px 1fr minmax(340px,430px)} }
@@ -449,5 +503,8 @@ input.volu:focus{border-color:var(--ac-line)}
   .nrow:has(textarea.name){flex-wrap:wrap}
   .nrow textarea.name{flex:1 1 calc(100% - 40px)}
   .nrow:has(textarea.name) .rm{margin-left:auto}
+  .nrow:has(input.name){flex-wrap:wrap}
+  .nrow input.name{flex:1 1 calc(100% - 40px)}
+  .nrow:has(input.name) .rm{margin-left:auto}
 }
 @media(prefers-reduced-motion:reduce){*{animation-duration:.01s!important;transition-duration:.01s!important}}

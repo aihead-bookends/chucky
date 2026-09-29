@@ -1,0 +1,154 @@
+{
+ "editor": "aiko-drinks",
+ "base": "v985722",
+ "state": {
+  "bands": [
+   {
+    "type": "signature",
+    "C0": [
+     0.7137,
+     0.2,
+     0.3255
+    ],
+    "C1": [
+     0.3137,
+     0.1059,
+     0.2
+    ],
+    "name": "KALA KHATTA SODA",
+    "desc": "Blueberry, black salt, soda",
+    "price": "360",
+    "vol": ""
+   },
+   {
+    "type": "signature",
+    "C0": [
+     0.9333,
+     0.4353,
+     0.5137
+    ],
+    "C1": [
+     0.6706,
+     0.0078,
+     0.1098
+    ],
+    "name": "SCARLETT",
+    "desc": "Hibiscus tea, berry, lemon",
+    "price": "360",
+    "vol": ""
+   },
+   {
+    "type": "signature",
+    "C0": [
+     0.8,
+     0.8,
+     0.8
+    ],
+    "C1": [
+     0.6824,
+     0.7882,
+     0.1216
+    ],
+    "name": "MINT MOJITO",
+    "desc": "Mint syrup, lemon, salt, soda",
+    "price": "360",
+    "vol": ""
+   },
+   {
+    "type": "signature",
+    "C0": [
+     0.9882,
+     0.2392,
+     0.1725
+    ],
+    "C1": [
+     0.7804,
+     0.0196,
+     0.1137
+    ],
+    "name": "BERRY BREEZE",
+    "desc": "Raspberry, vanilla, mint, lemon, grapefruit soda",
+    "price": "360",
+    "vol": ""
+   },
+   {
+    "type": "signature",
+    "C0": [
+     0.9922,
+     0.8353,
+     0.1176
+    ],
+    "C1": [
+     0.3137,
+     0.5333,
+     0.0431
+    ],
+    "name": "TROPICAL POP",
+    "desc": "Passionfruit, lemon, honey, ginger",
+    "price": "360",
+    "vol": ""
+   },
+   {
+    "type": "signature",
+    "C0": [
+     0.5725,
+     0.0706,
+     0
+    ],
+    "C1": [
+     0.1569,
+     0.0627,
+     0.051
+    ],
+    "name": "THAI LEMON BOBA TEA",
+    "desc": "Thai tea, chewy boba, lemon",
+    "price": "360",
+    "vol": ""
+   },
+   {
+    "type": "signature",
+    "C0": [
+     0.8196,
+     0.2314,
+     0
+    ],
+    "C1": [
+     0.5608,
+     0.0275,
+     0
+    ],
+    "name": "RASPBERRY KAFIR FIZZ",
+    "desc": "Raspberry, kafir lime, club soda",
+    "price": "360",
+    "vol": ""
+   },
+   {
+    "type": "soft",
+    "C0": [
+     0.1294,
+     0.0588,
+     0.0431
+    ],
+    "C1": [
+     0.898,
+     0.7255,
+     0
+    ],
+    "lines": [
+     {
+      "name": "RED BULL, GINGER ALE AND PERRIER ",
+      "price": "250"
+     },
+     {
+      "name": "COKE, SPRITE AND COKE ZERO",
+      "price": "200"
+     },
+     {
+      "name": "IYOSHI COLA",
+      "price": "360"
+     }
+    ]
+   }
+  ]
+ }
+}

@@ -2081,7 +2081,9 @@ async function renderPreview(){
   }catch(e){ if(!(e&&String(e.message||e).includes('ancelled'))) console.error(e); }
   if(my===renderToken){ document.getElementById('busy').classList.remove('on'); try{ pvSync(); }catch(_){} }
 }
-function buildTabs(){ const t=document.getElementById('tabs'); t.innerHTML=''; FM.menu_pages.forEach((mp,i)=>{ const b=document.createElement('button'); b.dataset.pg=mp; b.textContent='Page '+(i+1); if(mp===activePage)b.classList.add('on'); b.onclick=()=>{ activePage=mp; buildEditor(); renderPreview(); }; t.appendChild(b); }); }
+function buildTabs(){ const t=document.getElementById('tabs'); t.innerHTML=''; FM.menu_pages.forEach((mp,i)=>{ const b=document.createElement('button'); b.dataset.pg=mp; b.textContent='Page '+(i+1); if(mp===activePage)b.classList.add('on'); b.onclick=()=>{ activePage=mp; buildEditor(); renderPreview(); }; t.appendChild(b); });
+  // chucky-2: the shell's "Live preview — <page>" label follows the tab (the old page left it blank)
+  const pt=document.getElementById('ptag'); if(pt) pt.textContent='— Page '+(FM.menu_pages.indexOf(activePage)+1); }
 function photoUploadBtn(key){
   const wrap=document.createElement('label'); const has=!!photoUploads[key];
   wrap.style.cssText='display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:11.5px;cursor:pointer;margin-top:9px;padding:5px 11px;border:1px solid var(--line2);border-radius:8px;width:max-content;color:'+(has?'var(--ac)':'var(--muted)');

@@ -281,7 +281,7 @@ window.MenuState = (function () {
     if (!list.length) { panel.querySelector('.vrow').textContent = 'Nothing has been published yet.'; return; }
     panel.innerHTML = '<h4>Published versions</h4>' + list.map((v) =>
       '<div class="vrow" data-t="' + v.t + '"><div class="vl"><div>' + esc(when(v.t)) + (v.current ? ' <span class="vcur">live</span>' : '') + (v.base !== base ? ' <span class="vold">older PDF</span>' : '') + '</div>'
-      + '<div class="vm">' + v.edits + ' edits · ' + v.removed + ' removed · ' + v.added + ' added</div></div>'
+      + '<div class="vm">' + (v.drinks != null ? v.drinks + ' drinks' : v.edits + ' edits · ' + v.removed + ' removed · ' + v.added + ' added') + '</div></div>'
       + (v.base === base && v.t !== loadedT ? '<button type="button" data-load="' + v.t + '">Load</button>' : '') + '</div>').join('')
       + '<p class="vnote">Loading a version puts it in the editor. Nobody else sees it until you Publish.</p>';
     panel.querySelectorAll('[data-load]').forEach((b) => b.addEventListener('click', () => loadVersion(+b.dataset.load)));

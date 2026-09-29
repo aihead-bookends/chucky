@@ -234,6 +234,15 @@ test('every replaced version is kept, listed and readable', async () => {
   assert.equal((await json(await menuState(req('/api/menu-state/capiche?history=1')))).body.versions.length, 4);
 });
 
+test('a drinks menu that keeps its whole list is summarised by its number of drinks', async () => {
+  const bands = [{ type: 'signature', name: 'A' }, { type: 'signature', name: 'B' }, { type: 'soft', lines: [{ name: 'C' }, { name: 'D' }, { name: 'E' }] }];
+  await publish('aiko-drinks', { state: { bands }, base: 'v1', prev: null });
+  const hist = await json(await menuState(req('/api/menu-state/aiko-drinks?history=1')));
+  assert.equal(hist.body.versions[0].drinks, 5);
+  const food = await json(await menuState(req('/api/menu-state/capiche?history=1')));
+  assert.equal(food.body.versions.length, 0);
+});
+
 test('history keeps the newest HIST_KEEP versions', async () => {
   let prev = null;
   for (let i = 0; i < HIST_KEEP + 6; i++) prev = (await json(await publish('churnd', { state: { i }, base: 'v', prev }))).body.t;

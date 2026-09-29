@@ -42,6 +42,8 @@ const summary = (rec, current) => {
   return {
     t: rec.t, base: rec.base, current,
     edits: Object.keys(s.edits || {}).length, removed: (s.removed || []).length, added: (s.added || []).length,
+    // the Aiko drinks menu keeps its whole list of drinks (bands; the soft drinks share one) instead of edits
+    ...(Array.isArray(s.bands) ? { drinks: s.bands.reduce((n, b) => n + (Array.isArray(b && b.lines) ? b.lines.length : 1), 0) } : {}),
   };
 };
 

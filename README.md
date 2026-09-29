@@ -4,10 +4,13 @@ Bookends' menu-editor site: the Bookends landing page, the passphrase-gated edit
 editors, the bug-report queue and the secret-menu page, plus the API behind them. A from-scratch
 rebuild of <https://chucky-chi.vercel.app>, built from the UI kit in `../menu-editor`.
 
-**Status:** the site and backend are complete. **Capiche and Aiko have their menus** and are fully
-editable (see [The Capiche menu](#the-capiche-menu) and [The Aiko menu](#the-aiko-menu)). The other
-five editors don't have theirs yet: they show the full chrome with an empty editing surface, and
-Export, Publish, Full Preview and Personalise stay disabled.
+**Status:** the site and backend are complete. **Capiche, Aiko, Aiko drinks, Capiche Surat, Capiche
+Ahmedabad and Beshak have their menus** and are fully editable (see [The Capiche menu](#the-capiche-menu),
+[The Aiko menu](#the-aiko-menu), [The Aiko drinks menu](#the-aiko-drinks-menu),
+[The Capiche Surat drinks menu](#the-capiche-surat-drinks-menu),
+[The Capiche Ahmedabad drinks menu](#the-capiche-ahmedabad-drinks-menu) and
+[The Beshak menu](#the-beshak-menu)). The other editors don't have theirs yet: they show the full
+chrome with an empty editing surface, and Export, Publish, Full Preview and Personalise stay disabled.
 
 ## Run it locally
 
@@ -92,7 +95,7 @@ Editor keys: `capiche`, `aiko`, `churnd`, `beshak`, `aiko-drinks` (served at `/d
 public/
   index.html  404.html  chucky/  bugs/  menu/
   <editor>/index.html        thin page: <html data-editor="…"> + the shared scripts
-  capiche/ aiko/ capiche-surat/   + the menu: PDF, fieldmap, starting state, engine.js, dictionaries
+  capiche/ aiko/ drinks/ capiche-surat/ capiche-ahm/ beshak/   + the menu: PDF, fieldmap, starting state, engine.js, dictionaries
   preview/index.html         full-size PDF viewer (Full Preview)
   assets/css/site.css        landing, hub, secret menu, 404
   assets/css/editor.css      all seven editors; one colour-token block per brand
@@ -235,6 +238,29 @@ to the price instead of breaking early.
 - Aiko's names never take a second line, and its markers don't feed the layout plan, so Capiche's
   marker-cache fix doesn't apply here.
 
+## The Aiko drinks menu
+
+`public/drinks/` (editor key `aiko-drinks`) holds `drinks.pdf`, `fieldmap.json`, the dictionaries,
+`engine.js` and `start-state.json`. This editor works differently from the others. It doesn't splice
+the artwork: it redraws the whole drinks page from a list of *bands*. Each band has a gradient, a
+name, a description, a volume and a price, and the soft drinks share one band at the bottom. Its
+state is that whole list (`{bands, qr}`), not edits over the PDF, so Versions counts drinks instead of
+edits. The "Menu" tab is PDF page 2 and "Cover" is page 1 (`pages: [1, 0]` in `brands.js`).
+
+The starting menu is `Aiko_Drinks_Menu.pdf` (sent on 29 Sep 2026; exported from the old editor on 7
+Aug): the fieldmap's drinks with MANGO CHAMOY removed. The editor rebuilds that file byte for byte,
+apart from the date. For the same edits (renames, prices, volumes, gradients, reordering, removing and
+adding drinks, soft drinks) it writes the same PDF as the old editor.
+
+- **Five gradients run the other way from the original artwork.** When the fieldmap was made, the
+  bands for MINT MOJITO, TROPICAL POP, MANGO CHAMOY, RASPBERRY KAFIR FIZZ and the soft drinks were
+  read with their start and end colours swapped. The attached menu, and so the starting menu, print
+  them that way. Swap the two colour boxes on a drink's card to flip one back.
+- **Fixed:** the state is now a copy of the drinks. The old editor handed out its live list, so an
+  edit after a snapshot also changed the snapshot (History entries, and the menu kept before loading
+  the latest).
+- Loading and publishing go through MenuState, as in the other editors.
+
 ## The Capiche Surat drinks menu
 
 `public/capiche-surat/` holds `capiche-surat.pdf`, `fieldmap.json`, the dictionaries, `engine.js`
@@ -265,6 +291,68 @@ Changes from the old editor:
   stay put, which put the wrong photos on the wrong drinks.
 - Opening a page no longer counts as an edit.
 - The "couldn't read that image" note is no longer shown as a font warning.
+
+## The Capiche Ahmedabad drinks menu
+
+`public/capiche-ahm/` holds `capiche-ahm.pdf`, `fieldmap.json`, the dictionaries, `engine.js` and an
+empty `start-state.json`. The PDF is the old site's processed copy of `Capiche_Ahm_new.pdf` (the menu
+sent on 28 Sep 2026: a cover and three menu pages, specials and soft drinks, coffee and matcha, iced
+and V60). The cover has nothing to edit, so the tabs are the three menu pages. With no edits, the
+editor exports every page exactly as the PDF has it.
+
+The engine is Capiche Surat's with the brand swapped (`BRAND`, `MEM_BRAND`, the preview file name and
+title). It works the same way, photos included (see above). Keep the two in step: `diff` between them should show only those lines. For
+the same edits (the Surat list, on all three pages, plus uploaded photos) it writes the same page
+content as the old Ahmedabad editor.
+
+Carried over from the old editor, not yet fixed:
+
+- Removing a drink slides the photo of the drink above it within its tile.
+- A drink added in a freed slot has its markers close against the end of its name.
+
+## The Beshak menu
+
+`public/beshak/` holds `beshak.pdf`, `fieldmap.json`, the dictionaries, `engine.js` and an empty
+`start-state.json`. The PDF is `Beshak New.pdf` (the Canva export of 17 Sep 2026, sent on 29 Sep: 31
+dishes over APPS, BREADS and MAINS on page 1 and DRINKS and DESSERT on page 2) run through the old
+repo's builder, `src/beshak/build_beshak.js`. That uncompresses the streams the editor writes and
+merges each font's two per-page subsets, and changes nothing that prints. Beshak's text is not in
+the page stream but in a Form XObject per page, one glyph per string, so the fieldmap names a stream
+for every field. With no edits, the editor exports every one of those streams exactly as the PDF
+has it.
+
+**The builder needed one fix, made for this build.** A text block can switch fonts part-way (the
+artwork sets `/`, `'`, `(`, `)` and `&` in NotoSans between runs of the display and body faces), and
+the builder labelled every run in a block with the block's *last* font. So Bappa's Modak's
+description was filed as NotoSans, which has no letters, and its "&" and Sourdough Naan's ")" were
+left out of their descriptions. The fix records each show-op's own font (`parseText` in `lib.js`)
+and uses it wherever a run is measured or written (`build_beshak.js`), keeping the block's font for
+deciding which runs are names. Against the unfixed build it changes exactly those two descriptions
+and the BREADS column's width, which had run 4pt into MAINS. Apply the same fix before rebuilding.
+
+Changes from the old editor:
+
+- **Punctuation the faces don't have is set the way the artwork sets it.** An edit that uses `/`,
+  `'`, `(`, `)` or `&` (in a name, a description or an added dish) sets that character in NotoSans,
+  with a font switch around it, so "Biryani w/Salan", "Bappa's Modak" and the dessert and bread
+  descriptions keep their punctuation when edited. The old editor refused those characters, and a
+  description line holding one printed blank.
+- **Only edited text is checked for characters the fonts can't print.** The check used to run on
+  untouched text too, so the old editor opened with fields marked red and Export blocked. What is
+  still refused: letters the display face lacks (capital H, I, L, O, Q, X, Y, Z and lowercase q, x,
+  z; the Canva export subsets the fonts) and anything no NotoSans face has. Publish refuses the menu
+  while any remain, as the old one did.
+- Loading and publishing go through MenuState, as for Capiche and Aiko.
+- Edit memory records which PDF edits were made for. It stored a function instead, so edits for an
+  older PDF could not be told apart; autosaves from the old editor are shown but not resumed.
+- Exports go to History (the old editor called a function the edit memory didn't have).
+- Full Preview opens the shared `/preview/` page. The old one opened a new tab only after building
+  the PDF, which browsers block as a pop-up.
+- Messages appear in the page's bar instead of `alert()`, which some phone browsers block.
+
+Carried over from the old editor, not yet fixed: a dish added to a column that has no room below its
+last dish is drawn over whatever comes next (the heading of the next section). "+ Add item" puts it
+in the section's roomiest column, so this needs several added to one section.
 
 ## Adding another editor's menu
 

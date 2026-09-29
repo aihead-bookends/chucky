@@ -3,6 +3,7 @@
             allowlist in api/menu-state/[editor].mjs.
      mark   a brand mark from /assets/brand/ (see .mark in editor.css), or `text` for a typeset name
      tabs   the menu's pages, as the rail labels them
+     pages  the PDF page each tab shows (0-based), when that isn't simply the tab's position
      menu   true once the editor's menu is in place: its folder holds the PDF, fieldmap.json and an
             engine.js that its index.html loads (see editor.js)
      sections  false for a one-section menu (the drinks menus): no section list in the rail */
@@ -20,12 +21,12 @@ window.CHUCKY_BRANDS = {
     tabs: ['Menu', 'Cover'], search: 'Search flavors…', boot: 'Scooping…',
   },
   beshak: {
-    mem: 'beshak', name: 'Beshak', text: { label: 'BESHAK', cls: 'beshak' }, tag: 'Menu Editor',
+    mem: 'beshak', name: 'Beshak', text: { label: 'BESHAK', cls: 'beshak' }, tag: 'Menu Editor', menu: true,
     tabs: ['Page 1', 'Page 2'], search: 'Search items…', boot: 'Warming up the kitchen…',
   },
   drinks: {
-    mem: 'aiko-drinks', name: 'Aiko Drinks', mark: 'aiko', tag: 'Drinks Editor',
-    tabs: ['Menu', 'Cover'], search: 'Search drinks…', boot: 'Chilling the glasses…',
+    mem: 'aiko-drinks', name: 'Aiko Drinks', mark: 'aiko', tag: 'Drinks Editor', menu: true,
+    tabs: ['Menu', 'Cover'], pages: [1, 0], search: 'Search drinks…', boot: 'Chilling the glasses…',
   },
   'capiche-surat': {
     mem: 'capiche-surat', name: 'Capiche Surat Drinks', mark: 'capiche', tag: 'Surat · Drinks', menu: true,
@@ -33,6 +34,6 @@ window.CHUCKY_BRANDS = {
   },
   'capiche-ahm': {
     mem: 'capiche-ahm', name: 'Capiche Ahmedabad Drinks', mark: 'capiche', tag: 'Ahmedabad · Drinks', menu: true,
-    tabs: ['Page 1', 'Page 2', 'Page 3'], search: 'Search drinks…', boot: 'Chilling the glasses…',
+    tabs: ['Page 1', 'Page 2', 'Page 3'], sections: false, search: 'Search drinks…', boot: 'Chilling the glasses…',
   },
 };
