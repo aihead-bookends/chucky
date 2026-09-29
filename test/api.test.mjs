@@ -7,6 +7,10 @@ import listBugs from '../api/bugs.mjs';
 import patchBug from '../api/bug/[id].mjs';
 import menuState, { EDITORS, HIST_KEEP, HIST_TTL_S } from '../api/menu-state/[editor].mjs';
 import health from '../api/health.mjs';
+import postPhoto from '../api/photo.mjs';
+import getPhoto from '../api/photo/[id].mjs';
+import { MAX_PHOTO, photoKey } from '../api/_lib/photos.mjs';
+import { createHash } from 'node:crypto';
 import { TTL_S, MAX_BODY } from '../api/_lib/bugs.mjs';
 
 const BASE = 'http://test.local';
@@ -286,6 +290,53 @@ test('every editor key is publishable', async () => {
   assert.deepEqual([...EDITORS].sort(), ['aiko', 'aiko-drinks', 'beshak', 'capiche', 'capiche-ahm', 'capiche-surat', 'churnd']);
 });
 
+// ---- /api/photo ----
+
+// a tiny but real JPEG / PNG header, then filler — the routes only sniff the first bytes
+const jpeg = (n = 2000, fill = 7) => { const b = new Uint8Array(n).fill(fill); b.set([0xff, 0xd8, 0xff, 0xe0]); return b; };
+const png = () => { const b = new Uint8Array(300).fill(1); b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]); return b; };
+const upload = (bytes, key = PUBLISH_KEY, type = 'image/jpeg') =>
+  postPhoto(new Request(BASE + '/api/photo', { method: 'POST', body: bytes, headers: { 'content-type': type, ...(key ? { authorization: 'Bearer ' + key } : {}) } }));
+
+test('a photo is stored under the SHA-256 of its bytes and read back byte for byte', async () => {
+  const bytes = jpeg();
+  const { status, body } = await json(await upload(bytes));
+  assert.equal(status, 200);
+  assert.equal(body.id, createHash('sha256').update(bytes).digest('hex'));
+  assert.equal(body.size, bytes.length);
+  assert.equal(store.map.get(photoKey(body.id)).exp, null, 'photos never expire: old published versions still name them');
+  const res = await getPhoto(req('/api/photo/' + body.id));
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'image/jpeg');
+  assert.match(res.headers.get('cache-control'), /immutable/);
+  assert.deepEqual(new Uint8Array(await res.arrayBuffer()), bytes);
+  const p = await json(await upload(png(), PUBLISH_KEY, 'image/png'));
+  assert.equal((await getPhoto(req('/api/photo/' + p.body.id))).headers.get('content-type'), 'image/png');
+});
+
+test('uploading the same photo twice stores it once', async () => {
+  const a = await json(await upload(jpeg()));
+  const b = await json(await upload(jpeg()));
+  assert.equal(a.body.id, b.body.id);
+  assert.equal((await store.keys('photo_')).length, 1);
+});
+
+test('photo upload needs PUBLISH_KEY, an image, and fits the size cap', async () => {
+  assert.equal((await upload(jpeg(), null)).status, 403);
+  assert.equal((await upload(jpeg(), BUG_KEY)).status, 403);
+  assert.equal((await upload(new TextEncoder().encode('<script>alert(1)</script>'))).status, 415);
+  assert.equal((await upload(jpeg(MAX_PHOTO + 1))).status, 413);
+  assert.equal((await upload(jpeg(MAX_PHOTO))).status, 200);
+  assert.equal((await postPhoto(req('/api/photo'))).status, 405);
+});
+
+test('a photo id is 64 hex characters; anything else never reaches the store', async () => {
+  assert.equal((await getPhoto(req('/api/photo/' + 'a'.repeat(64)))).status, 404);
+  for (const bad of ['menu_state_capiche', 'A'.repeat(64), 'a'.repeat(63), '..%2Fetc']) {
+    assert.equal((await getPhoto(req('/api/photo/' + bad))).status, 400, bad);
+  }
+});
+
 // ---- no store / failing store ----
 
 test('without a store every data route answers 503, and auth is still checked first', async () => {
@@ -296,6 +347,9 @@ test('without a store every data route answers 503, and auth is still checked fi
   assert.equal((await listBugs(req('/api/bugs'))).status, 403);
   assert.equal((await menuState(req('/api/menu-state/capiche'))).status, 503);
   assert.equal((await menuState(req('/api/menu-state/capiche', { method: 'POST', body: { state: {}, prev: null } }))).status, 403);
+  assert.equal((await getPhoto(req('/api/photo/' + 'a'.repeat(64)))).status, 503);
+  assert.equal((await upload(jpeg(), null)).status, 403);
+  assert.equal((await upload(jpeg())).status, 503);
   const h = await json(await health(req('/api/health')));
   assert.deepEqual(h.body, { ok: false, store: 'none', storeOk: false, bugKey: true, publishKey: true });
 });
@@ -308,6 +362,8 @@ test('a store that throws gives 502, never an unhandled error', async () => {
   assert.equal((await patchBug(req('/api/bug/bug_1700000000000_abc', { method: 'PATCH', key: BUG_KEY, body: {} }))).status, 502);
   assert.equal((await menuState(req('/api/menu-state/capiche'))).status, 502);
   assert.equal((await menuState(req('/api/menu-state/capiche', { method: 'POST', key: PUBLISH_KEY, body: { state: {}, prev: null } }))).status, 502);
+  assert.equal((await getPhoto(req('/api/photo/' + 'a'.repeat(64)))).status, 502);
+  assert.equal((await upload(jpeg())).status, 502);
   const h = await json(await health(req('/api/health')));
   assert.equal(h.body.ok, false);
   assert.equal(h.body.storeError, 'down');

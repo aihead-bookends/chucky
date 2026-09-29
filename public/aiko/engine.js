@@ -3342,8 +3342,9 @@ const MEM = (function(){
     bar.querySelector('#memfresh').addEventListener('click',()=>dismiss(!stale));
   }
   // chucky-2: after a publish, or after loading the latest published menu, what's on screen IS the
-  // published menu — nothing left to resume
-  function rebase(){ try{ initial=J(memSnapshot()); localStorage.removeItem(AUTO); }catch(_){ } setStatus('',''); }
+  // published menu — nothing left to resume. Cancel a pending autosave too: publishing regenerates,
+  // which queues one, and if the server answers first it would put the old edits back afterwards.
+  function rebase(){ clearTimeout(timer); try{ initial=J(memSnapshot()); localStorage.removeItem(AUTO); }catch(_){ } setStatus('',''); }
   function init(){ try{ initial=J(memSnapshot()); }catch(_){ initial=''; } ready=true; build(); checkResume(); }
   return { init, tick, snapshot, restore, ago, rebase };
 })();

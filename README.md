@@ -79,6 +79,8 @@ Keys are sent as `Authorization: Bearer <key>`. `?k=<key>` is still accepted for
 | `GET /api/menu-state/:editor?history=1` | public | Every kept version, newest first. |
 | `GET /api/menu-state/:editor?v=<t>` | public | One version. |
 | `POST /api/menu-state/:editor` | `PUBLISH_KEY` | Publish `{state, base, prev}` for every device. `prev` is the version the edit started from (`null` if none). If that's no longer current it answers 409 and writes nothing. The replaced version is kept. |
+| `POST /api/photo` | `PUBLISH_KEY` | Store a drink photo (the JPEG or PNG bytes, up to 600 KB) and answer `{id}`: the SHA-256 of the bytes. The editor calls it while publishing. The same photo twice is stored once. |
+| `GET /api/photo/:id` | public | A stored photo. An id always names the same image, so it may be cached for a year. |
 | `GET /api/health` | public | Which store is in use, whether it answers, and whether both keys are set. |
 
 Editor keys: `capiche`, `aiko`, `churnd`, `beshak`, `aiko-drinks` (served at `/drinks/`),
@@ -90,7 +92,7 @@ Editor keys: `capiche`, `aiko`, `churnd`, `beshak`, `aiko-drinks` (served at `/d
 public/
   index.html  404.html  chucky/  bugs/  menu/
   <editor>/index.html        thin page: <html data-editor="…"> + the shared scripts
-  capiche/                   + the menu: PDF, fieldmap, starting state, engine.js, dictionaries
+  capiche/ aiko/ capiche-surat/   + the menu: PDF, fieldmap, starting state, engine.js, dictionaries
   preview/index.html         full-size PDF viewer (Full Preview)
   assets/css/site.css        landing, hub, secret menu, 404
   assets/css/editor.css      all seven editors; one colour-token block per brand
@@ -233,6 +235,37 @@ to the price instead of breaking early.
 - Aiko's names never take a second line, and its markers don't feed the layout plan, so Capiche's
   marker-cache fix doesn't apply here.
 
+## The Capiche Surat drinks menu
+
+`public/capiche-surat/` holds `capiche-surat.pdf`, `fieldmap.json`, the dictionaries, `engine.js`
+and an empty `start-state.json`. The PDF is the old site's processed copy of `Capiche_st_new.pdf`
+(the menu sent on 29 Sep 2026). It prints the same page as that file; one photo tile differs by
+under a pixel, because the SPECIALS bar was separated out so it can be switched on and off. With no
+edits, the editor exports that page pixel for pixel. For the same edits (names, descriptions,
+prices, volumes, removing and adding drinks, markers, NEW badges, SPECIALS bars, reordering) it
+writes the same PDF as the old editor, byte for byte apart from the date.
+
+Changes from the old editor:
+
+- **Photos are published.** The old editor kept an uploaded photo in that browser only, so no other
+  device ever saw it. Worse, a device without the photo that published put the drink's old photo
+  back for everyone. Now the menu names each drink's photo by id, with its crop:
+  - a new upload is kept on this device until Publish;
+  - Publish uploads it first (`POST /api/photo`, the same key) and only then publishes the menu that
+    names it;
+  - every other device loads it from `/api/photo/:id` and keeps a copy.
+
+  If a photo can't be loaded, the bar names the drink and Export waits. The photo is never dropped
+  from the menu by the next publish.
+- **No separate Save button.** Its named saves lived only in one browser. Edits are autosaved on the
+  device (with History, bottom left), and Publish keeps the menu, with its photos, for every device
+  and in Versions.
+- Loading and publishing go through MenuState, as for Capiche and Aiko.
+- Discarding an added drink moves the photos of the added drinks after it up with them. They used to
+  stay put, which put the wrong photos on the wrong drinks.
+- Opening a page no longer counts as an edit.
+- The "couldn't read that image" note is no longer shown as a font warning.
+
 ## Adding another editor's menu
 
 Follow Capiche:
@@ -246,7 +279,8 @@ Follow Capiche:
    once the editor is built. Call `MenuState.touch()` after each regenerate, and make the same
    `MEM` changes (`pub` in the autosave, the resume warning, `rebase`). Search Capiche's `engine.js`
    for `MenuState` and `chucky-2` to see each one. Never keep work only in the browser: photos and
-   anything else must reach the server, or other devices won't have them.
+   anything else must reach the server, or other devices won't have them. A drinks editor with
+   photos does what Capiche Surat's does (see below).
 4. Make the other `chucky-2` fixes wherever that engine has the same code:
    - add-ons before state
    - markers in the layout plan's cache key

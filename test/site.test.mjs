@@ -156,10 +156,14 @@ test('an editor with a menu has its engine, PDF and fieldmap, and a starting sta
     // dish it touches must exist in this fieldmap
     const start = JSON.parse(fs.readFileSync(`${dir}/start-state.json`, 'utf8'));
     assert.equal(start.base, 'v' + fs.statSync(`${dir}/${pdf}`).size, `${id}: start-state base matches ${pdf}`);
-    const ids = new Set(JSON.parse(fs.readFileSync(`${dir}/fieldmap.json`, 'utf8')).fields.map((f) => f.id));
+    // the food editors list fields by id; the drinks editor lists pages of drinks, addressed
+    // "page:drink" (an edit adds ":name", ":desc", …)
+    const fm = JSON.parse(fs.readFileSync(`${dir}/fieldmap.json`, 'utf8'));
+    const ids = new Set(fm.fields ? fm.fields.map((f) => f.id) : fm.pages.flatMap((p) => p.items.map((_, i) => `${p.page}:${i}`)));
+    const idOf = (k) => (fm.fields ? k : k.split(':').slice(0, 2).join(':'));
     const s = start.state;
     for (const k of [...Object.keys(s.edits || {}), ...(s.removed || []), ...Object.keys(s.markerEdits || {})]) {
-      assert.ok(ids.has(k), `${id}: start-state refers to field ${k}, which the fieldmap doesn't have`);
+      assert.ok(ids.has(idOf(k)), `${id}: start-state refers to field ${k}, which the fieldmap doesn't have`);
     }
   }
 });

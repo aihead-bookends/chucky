@@ -4,7 +4,8 @@
      mark   a brand mark from /assets/brand/ (see .mark in editor.css), or `text` for a typeset name
      tabs   the menu's pages, as the rail labels them
      menu   true once the editor's menu is in place: its folder holds the PDF, fieldmap.json and an
-            engine.js that its index.html loads (see editor.js) */
+            engine.js that its index.html loads (see editor.js)
+     sections  false for a one-section menu (the drinks menus): no section list in the rail */
 window.CHUCKY_BRANDS = {
   capiche: {
     mem: 'capiche', name: 'Capiche', mark: 'capiche', tag: 'Menu Editor', menu: true,
@@ -27,11 +28,11 @@ window.CHUCKY_BRANDS = {
     tabs: ['Menu', 'Cover'], search: 'Search drinks…', boot: 'Chilling the glasses…',
   },
   'capiche-surat': {
-    mem: 'capiche-surat', name: 'Capiche Surat Drinks', mark: 'capiche', tag: 'Surat · Drinks',
-    tabs: ['Page 1', 'Page 2'], search: 'Search drinks…', boot: 'Chilling the glasses…',
+    mem: 'capiche-surat', name: 'Capiche Surat Drinks', mark: 'capiche', tag: 'Surat · Drinks', menu: true,
+    tabs: ['Page 1'], sections: false, search: 'Search drinks…', boot: 'Chilling the glasses…',
   },
   'capiche-ahm': {
-    mem: 'capiche-ahm', name: 'Capiche Ahmedabad Drinks', mark: 'capiche', tag: 'Ahmedabad · Drinks',
-    tabs: ['Page 1', 'Page 2'], search: 'Search drinks…', boot: 'Chilling the glasses…',
+    mem: 'capiche-ahm', name: 'Capiche Ahmedabad Drinks', mark: 'capiche', tag: 'Ahmedabad · Drinks', menu: true,
+    tabs: ['Page 1', 'Page 2', 'Page 3'], search: 'Search drinks…', boot: 'Chilling the glasses…',
   },
 };

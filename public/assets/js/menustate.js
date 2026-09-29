@@ -15,7 +15,9 @@
    - Nothing could be recovered. The server keeps every replaced version; "Versions" loads one back.
 
    The engine plugs in with MenuState.boot() (while loading) and MenuState.ready() (once its editor
-   is built), and calls MenuState.touch() whenever its state changes. */
+   is built), and calls MenuState.touch() whenever its state changes. An engine whose menu names
+   files kept on the server (the drinks menus' photos) also passes ready() a prepare(key) hook that
+   uploads them when publishing, and can put up its own message in the bar with MenuState.notice(). */
 window.MenuState = (function () {
   const API = '/api/menu-state/';
   const KEY_STORE = 'chucky_publishkey';
@@ -200,6 +202,16 @@ window.MenuState = (function () {
           if (!d.ok) { bar('info', 'Not published — publishing needs the publish key. Your edits are still here.'); return; }
           key = d.value; setBusy(true);
         }
+        // Anything the menu names that isn't on the server yet (a drinks menu's new photos) goes up
+        // first, with the same key. If it can't, nothing is published: a menu naming a photo no
+        // other device can load would show them a gap.
+        if (hooks.prepare) {
+          let p;
+          try { p = await hooks.prepare(key); }
+          catch (e) { bar('bad', 'Not published: ' + esc(reason(e)) + '. Nothing changed for anyone else — your edits are still here.', [['Try again', publish]]); return; }
+          if (p === 'forbidden') { forgetKey(); key = ''; error = 'That key wasn’t accepted. Check it and try again.'; continue; }
+          state = hooks.snapshot();
+        }
         const res = await post(key, state);
         if (res.status === 403) { forgetKey(); key = ''; error = 'That key wasn’t accepted. Check it and try again.'; continue; }
         rememberKey(key);                                   // anything but 403: the server took the key
@@ -289,6 +301,7 @@ window.MenuState = (function () {
 
   return {
     boot, ready, render,
+    notice: bar,
     touch: () => render(),
     version: () => loadedT,
     status: () => status,

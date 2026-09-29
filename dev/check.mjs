@@ -105,6 +105,33 @@ await step('Publishing is protected (nothing is written)', async () => {
   else fail(`a publish from an out-of-date copy answered ${r.status} — it should be refused with 409`);
 });
 
+await step('Drink photos (nothing is written)', async () => {
+  // every photo a published drinks menu names must load, or other devices show a gap
+  for (const ed of EDITORS) {
+    const r = await get('/api/menu-state/' + ed);
+    const photos = (r.status === 200 && r.body?.state?.photos) || {};
+    const ids = [...new Set(Object.values(photos).map((p) => p && p.id).filter(Boolean))];
+    if (!ids.length) continue;
+    let bad = 0;
+    for (const id of ids) {
+      const p = await get('/api/photo/' + id);
+      if (p.status !== 200 || !/^image\//.test(p.type)) { bad++; fail(`${ed}: photo ${id.slice(0, 12)}… answered ${p.status}`); }
+    }
+    if (!bad) pass(`${ed}: all ${ids.length} published photo(s) load`);
+  }
+  const probe = await get('/api/photo/' + '0'.repeat(64));
+  probe.status === 404 ? pass('photo route answers (unknown photo: 404)') : fail(`an unknown photo answered ${probe.status}`);
+  // a body that isn't an image: refused without the key (403), and with it (415) — never stored
+  const send = (key) => get('/api/photo', { method: 'POST', body: 'not an image', headers: { 'content-type': 'image/jpeg', ...(key ? { authorization: 'Bearer ' + key } : {}) } });
+  const anon = await send('');
+  anon.status === 403 ? pass('upload without the key: refused (403)') : fail(`upload without the key: answered ${anon.status} — photo uploads are not protected`);
+  if (!PUBLISH_KEY) return skip('no PUBLISH_KEY given: pass --publish-key to check uploads accept it');
+  const r = await send(PUBLISH_KEY);
+  if (r.status === 415) pass('publish key accepted for uploads, and a non-image is refused (415)');
+  else if (r.status === 403) fail('the publish key was not accepted for uploads (403)');
+  else fail(`a non-image upload answered ${r.status} — it should be refused with 415`);
+});
+
 await step('Bug queue', async () => {
   const anon = await get('/api/bugs');
   anon.status === 403 ? pass('without the key: refused (403)') : fail(`without the key: answered ${anon.status} — the queue is not protected`);

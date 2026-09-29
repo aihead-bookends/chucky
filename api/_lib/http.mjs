@@ -48,3 +48,11 @@ export async function readBody(req, max) {
   const raw = await req.text();
   return raw.length > max ? null : raw;
 }
+
+// The same for a binary body (a photo). Returns a Uint8Array, or null when it is over `max`.
+export async function readBytes(req, max) {
+  const declared = Number(req.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > max) return null;
+  const raw = new Uint8Array(await req.arrayBuffer());
+  return raw.length > max ? null : raw;
+}

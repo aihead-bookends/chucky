@@ -65,8 +65,8 @@ ${live ? '<div id="statebar" class="statebar" role="status" hidden></div>' : ''}
 </header>
 <main class="app">
   <nav class="rail" id="rail" aria-label="Menu pages and sections">
-    <div class="tabs" role="tablist">${B.tabs.map((t, i) => `<button role="tab" data-pg="${i}" aria-selected="${i === 0}"${i === 0 ? ' class="on"' : ''}>${esc(t)}</button>`).join('')}</div>
-    <div class="lbl2">Sections</div>
+    <div class="tabs" id="tabs" role="tablist">${B.tabs.map((t, i) => `<button role="tab" data-pg="${i}" aria-selected="${i === 0}"${i === 0 ? ' class="on"' : ''}>${esc(t)}</button>`).join('')}</div>
+    ${B.sections === false ? '' : '<div class="lbl2">Sections</div>'}
     ${live ? '' : '<div class="note">Sections appear here once the menu is added.</div>'}
   </nav>
   <section id="editor" aria-label="Menu items">${live ? '' : emptyState}</section>
