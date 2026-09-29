@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Secret Menu · Bookends</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/css/site.css">
+<style>
+.title{font-size:clamp(38px,8vw,86px);font-style:italic}
+.tiles{margin-top:2.6rem;display:grid;grid-template-columns:1fr 1fr;gap:20px;width:min(720px,92vw);perspective:1200px}
+.tile{display:flex;flex-direction:column;justify-content:space-between;min-height:190px;padding:26px 24px 22px;cursor:pointer}
+.tiles>.tile:nth-child(1){animation-delay:.4s}
+.tiles>.tile:nth-child(2){animation-delay:.55s}
+.tile:hover{box-shadow:0 20px 55px -22px var(--glow)}
+.tl-ttl{font-size:clamp(28px,4.6vw,42px);font-weight:600;line-height:1;display:flex;align-items:center;gap:10px}
+.lock{font-size:.6em}
+.tl-desc{margin-top:14px;color:var(--cream2);font-size:14px;font-style:italic;line-height:1.4}
+.meta{margin-top:18px;display:flex;justify-content:space-between;align-items:baseline}
+.nm{font-size:12px;letter-spacing:.06em;color:var(--muted)}
+.tile .go{opacity:.5;transform:translateX(-4px)}
+.main{--ac:var(--gold);--glow:rgba(224,176,32,.55)}
+.door{--ac:var(--red);--glow:rgba(255,42,26,.55)}
+/* back-door passphrase modal */
+#gate{position:fixed;inset:0;z-index:20;display:none;align-items:center;justify-content:center;background:rgba(8,8,6,.72);backdrop-filter:blur(3px)}
+#gate.on{display:flex}
+.gcard{background:#15140f;border:1px solid rgba(224,176,32,.35);border-radius:14px;padding:26px 24px;width:min(360px,88vw);text-align:center;box-shadow:0 24px 60px rgba(0,0,0,.5)}
+.gcard h3{font-style:italic;font-weight:600;font-size:22px;margin-bottom:4px}
+.gcard .gh{font-size:11.5px;color:#8c8579;font-family:var(--mono);margin-bottom:16px}
+.gcard .pass input{padding:9px 11px}
+.gcard .pass button{padding:0 16px}
+.gerr{margin-top:10px;font-size:11.5px;color:var(--red);min-height:14px;font-family:var(--mono)}
+@media(max-width:560px){.tiles{grid-template-columns:1fr}}
+@media(max-width:560px),(max-height:640px){
+  body{overflow:auto}
+  .wrap{height:auto;min-height:100%;justify-content:flex-start;padding:60px 18px 40px}
+  .foot{position:static;margin-top:26px}
+}
+</style>
+</head>
+<body>
+<div class="field"></div>
+<div class="ember a"></div><div class="ember b"></div>
+<div class="grain"></div>
+<a class="back" href="/">↩ Bookends</a>
+<main class="wrap">
+  <div class="hero">
+    <h1 class="title">Secret Menu</h1>
+    <div class="kicker mono">two ways in</div>
+  </div>
+  <div class="tiles">
+    <a class="tile main" href="https://bookends.capichesecretmenu.workers.dev/">
+      <span class="edge"></span><span class="sheen"></span>
+      <div class="tl-ttl">Main Menu</div>
+      <div><div class="tl-desc">The live customer menu.</div>
+      <div class="meta"><span class="nm mono">Open to all</span><span class="go">view →</span></div></div>
+    </a>
+    <a class="tile door" id="backdoor" href="https://bookends.capichesecretmenu.workers.dev/the-back-door">
+      <span class="edge"></span><span class="sheen"></span>
+      <div class="tl-ttl">Back Door <span class="lock" aria-hidden="true">🔒</span></div>
+      <div><div class="tl-desc">The hidden entrance.</div>
+      <div class="meta"><span class="nm mono">Staff · passphrase</span><span class="go">enter →</span></div></div>
+    </a>
+  </div>
+</main>
+<div id="gate" role="dialog" aria-modal="true" aria-labelledby="gtitle"><div class="gcard">
+  <h3 id="gtitle">Back Door</h3><div class="gh">passphrase to continue</div>
+  <form class="pass" id="gform" autocomplete="off"><input id="pw" type="password" placeholder="passphrase" aria-label="Passphrase" spellcheck="false"><button type="submit">ENTER</button></form>
+  <div class="gerr" id="gerr" aria-live="polite"></div>
+</div></div>
+<div class="foot mono">BOOKENDS · secret menu</div>
+<script src="/assets/js/site.js"></script>
+<script>
+(function () {
+  const $ = (s) => document.querySelector(s);
+  const door = $('#backdoor').href;
+  const close = () => $('#gate').classList.remove('on');
+  $('#backdoor').addEventListener('click', (e) => {
+    if (ChuckyGate.unlocked()) return;   // already unlocked: follow the link
+    e.preventDefault();
+    $('#gate').classList.add('on');
+    setTimeout(() => $('#pw').focus(), 50);
+  });
+  $('#gform').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    let ok;
+    try { ok = await ChuckyGate.check($('#pw').value); }
+    catch (err) { $('#gerr').textContent = err.message; return; }
+    if (ok) { location.href = door; return; }
+    ChuckyGate.shake($('#gform'));
+    $('#gerr').textContent = 'Wrong passphrase — try again';
+    $('#pw').select();
+  });
+  $('#gate').addEventListener('click', (e) => { if (e.target.id === 'gate') close(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+})();
+</script>
+</body>
+</html>

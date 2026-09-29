@@ -1,0 +1,15 @@
+{
+  "name": "chucky",
+  "version": "2.0.0",
+  "description": "Bookends menu editors — static site + bug-report and Publish API (Vercel)",
+  "private": true,
+  "scripts": {
+    "dev": "node dev/server.mjs",
+    "dev:local": "node dev/server.mjs --local",
+    "test": "node --test",
+    "check": "node dev/check.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

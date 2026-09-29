@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chucky · Bookends Menu Editor</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/css/site.css">
+<style>
+/* The picker is taller than many laptop viewports, so this page scrolls. The visible section is
+   centred with auto margins and the footer follows it, in flow. */
+body{overflow-x:hidden;overflow-y:auto}
+.wrap{height:auto;min-height:100%}
+.hero,.picker.show{margin:auto 0}
+.foot{position:static;margin-top:28px;flex:none}
+.hero{position:relative}
+.cherowrap{opacity:0;transform:translateY(-130px);animation:dropin 1s cubic-bezier(.34,1.56,.64,1) .35s forwards}
+.chero{display:block;margin:0 auto 2px;width:clamp(132px,19vw,188px);height:auto;color:var(--cream);filter:drop-shadow(0 6px 16px rgba(0,0,0,.5));animation:bob 4.6s ease-in-out 1.5s infinite;transform-origin:50% 80%}
+@keyframes dropin{0%{opacity:0;transform:translateY(-130px)}60%{opacity:1}100%{opacity:1;transform:translateY(0)}}
+@keyframes bob{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-8px) rotate(-1.6deg)}}
+.title{font-size:clamp(40px,8vw,92px);letter-spacing:-.01em;animation-delay:.35s}
+.kicker{animation-delay:.7s}
+.tag{margin-top:1.4rem;font-size:clamp(14px,2vw,17px);color:var(--cream2);font-style:italic;opacity:0;animation:fade .8s ease .85s forwards}
+.gate{margin:2.6rem auto 0;opacity:0;transform:translateY(10px);animation:up .7s ease 1.05s forwards;width:min(360px,86vw)}
+.hint{margin-top:.7rem;font-size:11px;color:var(--hint);text-align:center}
+.hint.err{color:var(--red)}
+.picker{display:none;text-align:center;width:min(760px,92vw)}
+.picker.show{display:block}
+.pk-head{font-size:clamp(22px,4vw,34px);font-weight:500;opacity:0;animation:up .7s ease .05s forwards}
+.pk-sub{margin-top:.5rem;color:var(--muted);font-size:13px;letter-spacing:.05em;opacity:0;animation:fade .7s ease .25s forwards}
+.tiles{margin-top:2.2rem;display:grid;grid-template-columns:1fr 1fr;gap:16px;text-align:left}
+.tile{padding:28px 24px 22px}
+.tile .wm{height:74px;display:flex;align-items:flex-end;color:var(--ac)}
+.tile.aiko .wm .mark{height:54px}
+.tile .meta{margin-top:20px;display:flex;justify-content:space-between;align-items:baseline}
+.tile .nm{font-size:13px;letter-spacing:.06em;color:var(--cream2)}
+.wordtext{font-family:var(--serif);font-weight:600;line-height:1}
+.wordtext.churnd{font-style:italic;font-size:46px;align-self:center}
+.wordtext.beshak{font-weight:500;font-size:38px;letter-spacing:.17em;align-self:center}
+.drinks-wm{display:flex;align-items:center;gap:9px}
+.drinks-wm svg{width:34px;height:34px}
+.drinks-wm b{font-family:var(--serif);font-style:italic;font-weight:600;font-size:38px;line-height:1}
+.cap{--ac:var(--red);--glow:rgba(255,42,26,.5)}
+.aiko{--ac:var(--gold);--glow:rgba(224,176,32,.5)}
+.churnd{--ac:#ED1C24;--glow:rgba(237,28,36,.5)}
+.drinks{--ac:#A8D93A;--glow:rgba(168,217,58,.5)}
+.capsur{--ac:#E8382F;--glow:rgba(232,56,47,.5)}
+.capahm{--ac:#F0616B;--glow:rgba(240,97,107,.5)}
+.beshak{--ac:#D04128;--glow:rgba(208,65,40,.5)}
+.logout{position:fixed;top:16px;right:18px;z-index:3;font-size:11px;color:var(--hint);background:none;border:0;cursor:pointer;font-family:var(--mono);letter-spacing:.08em;display:none}
+.logout.show{display:block}
+.logout:hover{color:var(--cream)}
+@media(max-width:560px){.tiles{grid-template-columns:1fr}}
+@media(max-width:560px),(max-height:680px){
+  .wrap{padding:56px 18px 24px}
+  .gate{margin-top:2rem}
+  .tiles{margin-top:1.6rem}
+}
+@media(prefers-reduced-motion:reduce){.cherowrap,.chero{animation:none!important;opacity:1;transform:none}}
+</style>
+</head>
+<body>
+<div class="field"></div>
+<div class="ember a"></div><div class="ember b"></div>
+<div class="grain"></div>
+<a class="back" href="/">↩ Bookends</a>
+<button class="logout" id="logout" type="button">lock ↩</button>
+<main class="wrap">
+  <section class="hero" id="hero">
+    <div class="cherowrap"><svg class="chero" viewBox="0 0 220 220" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Chucky">
+      <path d="M58 188 C22 188 24 156 48 158"/>
+      <path d="M70 200 C34 200 36 150 60 128 C72 117 78 116 86 112 C104 124 124 124 142 114 C150 119 160 126 168 138 C190 168 178 201 138 200 C116 200 92 200 70 200 Z"/>
+      <path d="M96 199 q6 6 12 0 M120 199 q6 6 12 0" stroke-width="2.6"/>
+      <path d="M74 70 L68 30 L94 54 C102 50 118 50 126 56 L152 32 L146 74 C156 96 150 120 110 121 C72 121 64 94 74 70 Z"/>
+      <path d="M139 67 L154 58" stroke-width="4"/>
+      <rect x="74" y="64" width="32" height="20" fill="currentColor" stroke="none"/>
+      <rect x="112" y="62" width="28" height="17" fill="currentColor" stroke="none"/>
+      <rect x="103" y="69" width="10" height="5" fill="currentColor" stroke="none"/>
+      <rect x="79" y="78" width="6.5" height="4.5" fill="#15140f" stroke="none"/>
+      <rect x="116" y="74" width="5" height="3.5" fill="#15140f" stroke="none"/>
+      <path d="M106 95 q5 6 10 1" stroke-width="3"/>
+      <path d="M80 85 L56 79 M80 90 L54 91 M82 95 L58 103" stroke-width="2.4"/>
+      <path d="M150 81 L174 75 M150 86 L176 87 M148 91 L172 99" stroke-width="2.4"/>
+    </svg></div>
+    <h1 class="title">Chucky</h1>
+    <div class="kicker mono">Bookends menu editor</div>
+    <p class="tag" id="greet">Chucky is here to assist you today with menu editing.</p>
+    <div class="gate" id="gate">
+      <form class="pass" id="gform" autocomplete="off">
+        <input id="pw" type="password" placeholder="passphrase" aria-label="Passphrase" spellcheck="false">
+        <button type="submit">ENTER</button>
+      </form>
+      <div class="hint mono" id="hint" aria-live="polite">Bookends R&amp;D · staff access</div>
+    </div>
+  </section>
+
+  <section class="picker" id="picker">
+    <h2 class="pk-head">Which menu are you editing today?</h2>
+    <div class="pk-sub mono">Pick a brand to open its editor</div>
+    <div class="tiles">
+      <a class="tile cap" href="/capiche/">
+        <span class="edge"></span><span class="sheen"></span>
+        <div class="wm"><span class="mark capiche" role="img" aria-label="Capiche"></span></div>
+        <div class="meta"><span class="nm mono">Italian pizzeria · 4 outlets</span><span class="go">open →</span></div>
+      </a>
+      <a class="tile aiko" href="/aiko/">
+        <span class="edge"></span><span class="sheen"></span>
+        <div class="wm"><span class="mark aiko" role="img" aria-label="Aiko"></span></div>
+        <div class="meta"><span class="nm mono">Pan-Asian · Surat &amp; Ahmedabad</span><span class="go">open →</span></div>
+      </a>
+      <a class="tile churnd" href="/churnd/">
+        <span class="edge"></span><span class="sheen"></span>
+        <div class="wm"><span class="wordtext churnd">Churn'd</span></div>
+        <div class="meta"><span class="nm mono">Ice cream · Ahmedabad</span><span class="go">open →</span></div>
+      </a>
+      <a class="tile drinks" href="/drinks/">
+        <span class="edge"></span><span class="sheen"></span>
+        <div class="wm"><span class="drinks-wm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h14l-6 8v7"/><path d="M9 18h6"/><path d="M7.5 6h9"/></svg><b>Drinks</b></span></div>
+        <div class="meta"><span class="nm mono">Aiko · Mocktails &amp; sodas</span><span class="go">open →</span></div>
+      </a>
+      <a class="tile capsur" href="/capiche-surat/">
+        <span class="edge"></span><span class="sheen"></span>
+        <div class="wm"><span class="drinks-wm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h14l-6 8v7"/><path d="M9 18h6"/><path d="M7.5 6h9"/></svg><b>Drinks</b></span></div>
+        <div class="meta"><span class="nm mono">Capiche Surat · Drinks</span><span class="go">open →</span></div>
+      </a>
+      <a class="tile beshak" href="/beshak/">
+        <span class="edge"></span><span class="sheen"></span>
+        <div class="wm"><span class="wordtext beshak">BESHAK</span></div>
+        <div class="meta"><span class="nm mono">Gourmet Indian · Dine-in</span><span class="go">open →</span></div>
+      </a>
+      <a class="tile capahm" href="/capiche-ahm/">
+        <span class="edge"></span><span class="sheen"></span>
+        <div class="wm"><span class="drinks-wm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h14l-6 8v7"/><path d="M9 18h6"/><path d="M7.5 6h9"/></svg><b>Drinks</b></span></div>
+        <div class="meta"><span class="nm mono">Capiche Ahmedabad · Drinks + Coffee</span><span class="go">open →</span></div>
+      </a>
+    </div>
+  </section>
+  <div class="foot mono">CHUCKY v2 — byte-level menu editor · Bookends Pvt Ltd</div>
+</main>
+<script src="/assets/js/site.js"></script>
+<script src="/assets/js/chucky.js"></script>
+<script>
+(function () {
+  const $ = (s) => document.querySelector(s);
+  const reveal = () => { $('#hero').style.display = 'none'; $('#picker').classList.add('show'); $('#logout').classList.add('show'); };
+  if (ChuckyGate.unlocked()) reveal();
+  $('#greet').textContent = Chucky.greeting();
+
+  $('#gform').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const hint = $('#hint');
+    let ok;
+    try { ok = await ChuckyGate.check($('#pw').value); }
+    catch (err) { hint.textContent = err.message; hint.classList.add('err'); return; }
+    if (ok) {
+      // animate(), not style.opacity: the gate's filled entrance animation would override an inline style
+      $('#gate').animate([{ opacity: 1 }, { opacity: 0 }], { duration: 260, fill: 'forwards' });
+      setTimeout(reveal, 260);
+    } else {
+      ChuckyGate.shake($('#gform'));
+      hint.textContent = 'Wrong passphrase — try again'; hint.classList.add('err');
+      $('#pw').select();
+    }
+  });
+  $('#logout').addEventListener('click', () => { ChuckyGate.lock(); location.href = '/'; });
+})();
+</script>
+</body>
+</html>

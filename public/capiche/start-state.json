@@ -1,0 +1,89 @@
+{
+ "editor": "capiche",
+ "base": "v4323752",
+ "state": {
+  "qr": {
+   "base": {},
+   "added": []
+  },
+  "edits": {
+   "1:9": "CASSATA 2.O",
+   "1:25": "TRIPOLINE, BECHAMEL, FRIED LEEKS,CHIMICHURRI [270GMS]",
+   "0:16": "HULK 2.O",
+   "0:17": "GREEN SAUCE, MOZZ, CHEDDAR, SRIRACHA, CHILLIES, LABNEH, ZUCCHINI, [FIRE LEVEL: MID / PRIME]",
+   "0:29": "RED SRIRACHA, POMODORO, SMOKED MOZZ, GARLIC, CHIMICHURRI, HONEY BUTTER, WHIPPED FETA",
+   "1:10": "MULBERRY AND VANILLA MOUSSE, JELLY, CASHEWS, CARAMELIZED MILK [280GMS]"
+  },
+  "removed": [
+   "1:3",
+   "1:48"
+  ],
+  "added": [
+   {
+    "sec": 1,
+    "name": "HOT CHIPS",
+    "desc": "CACIO E PEPE SAUCE, BLUE CHEESE, GOAT CHEESE, CHILLIES, POTATO CHIPS",
+    "price": "1140",
+    "price2": "1440",
+    "allergens": [
+     "dairy",
+     "gluten",
+     "new"
+    ],
+    "_id": 1
+   }
+  ],
+  "markerEdits": {
+   "1:0": [
+    "dairy",
+    "gluten",
+    "jain"
+   ],
+   "0:16": [
+    "dairy",
+    "gluten",
+    "chilli"
+   ],
+   "1:51": [
+    "dairy",
+    "gluten",
+    "spicy",
+    "chilli",
+    "new"
+   ]
+  },
+  "persona": {
+   "occasion": "",
+   "guest": ""
+  },
+  "addons": {
+   "rows": [
+    {
+     "key": "b0",
+     "name": "GHASLET HOT SAUCE - 30ML/180ML",
+     "price": "120/400",
+     "removed": false
+    },
+    {
+     "key": "b1",
+     "name": "PARMESAN, TRUFFLE AIOLI",
+     "price": "120",
+     "removed": false
+    },
+    {
+     "key": "b2",
+     "name": "BURRATA CHEESE",
+     "price": "200",
+     "removed": false
+    },
+    {
+     "key": "b3",
+     "name": "TRUFFLE",
+     "price": "240",
+     "removed": false
+    }
+   ],
+   "title": ""
+  }
+ }
+}

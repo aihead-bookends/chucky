@@ -1,0 +1,84 @@
+/* Shared by the landing, hub, secret-menu and 404 pages: tokens, the ambient backdrop, the tile
+   language and brand marks. The editors use editor.css. */
+:root{
+  --ink:#0E0D0B;--panel:#161410;--card:#1E1B15;
+  --cream:#F4ECDD;--cream2:#E9DEC8;--cream-dim:#CFC6B4;--muted:#8F8676;--hint:#6a655b;--faint:#544f47;
+  --line:rgba(244,236,221,.10);--line2:rgba(244,236,221,.18);
+  --gold:#E0B020;--red:#FF2A1A;
+  --serif:'Lora',Georgia,serif;--mono:'DM Mono',ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--ink);color:var(--cream);font-family:var(--serif);overflow:hidden;-webkit-font-smoothing:antialiased}
+.mono{font-family:var(--mono);letter-spacing:.04em}
+
+/* ---- ambient backdrop ---- */
+.field{position:fixed;inset:0;z-index:0;background:
+  radial-gradient(60% 50% at 50% 8%, rgba(224,176,32,.10), transparent 70%),
+  radial-gradient(50% 40% at 85% 95%, rgba(255,42,26,.08), transparent 70%),
+  radial-gradient(40% 40% at 12% 88%, rgba(224,176,32,.05), transparent 70%);animation:breathe 14s ease-in-out infinite}
+.ember{position:fixed;z-index:0;width:42vmax;height:42vmax;border-radius:50%;filter:blur(90px);opacity:.14;pointer-events:none}
+.ember.a{background:var(--gold);top:-18vmax;left:-12vmax;animation:drift1 26s ease-in-out infinite}
+.ember.b{background:var(--red);bottom:-20vmax;right:-14vmax;animation:drift2 32s ease-in-out infinite}
+.grain{position:fixed;inset:0;z-index:1;opacity:.04;pointer-events:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+@keyframes breathe{0%,100%{opacity:.85;transform:scale(1)}50%{opacity:1;transform:scale(1.04)}}
+@keyframes drift1{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(9vmax,6vmax) scale(1.15)}}
+@keyframes drift2{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-8vmax,-7vmax) scale(1.1)}}
+
+/* ---- page frame ---- */
+.wrap{position:relative;z-index:2;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px}
+.back{position:fixed;top:16px;left:18px;z-index:3;font-size:12px;color:#8c8579;text-decoration:none;font-family:var(--mono);letter-spacing:.08em}
+.back:hover{color:var(--cream)}
+.back:focus-visible{outline:2px solid var(--cream);outline-offset:3px;border-radius:4px}
+.hero{text-align:center}
+.title{font-weight:600;line-height:.95;opacity:0;transform:translateY(14px);animation:up .8s ease .1s forwards}
+.kicker{margin-top:.9rem;font-size:clamp(11px,1.5vw,13px);color:var(--muted);text-transform:uppercase;letter-spacing:.34em;opacity:0;animation:fade .8s ease .45s forwards}
+.foot{position:fixed;bottom:16px;left:0;right:0;text-align:center;font-size:11px;color:var(--faint);z-index:2;letter-spacing:.05em}
+@keyframes up{to{opacity:1;transform:translateY(0)}}
+@keyframes fade{to{opacity:1}}
+@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-7px)}40%,80%{transform:translateX(7px)}}
+.shake{animation:shake .4s}
+
+/* ---- tiles: the editor's card language ---- */
+.tile{position:relative;display:block;text-decoration:none;color:var(--cream);border:1px solid var(--line);border-radius:14px;background:var(--card);
+  overflow:hidden;opacity:0;translate:0 16px;transition:transform .3s cubic-bezier(.2,.7,.2,1),border-color .3s,box-shadow .3s}
+.tile:hover{transform:translateY(-6px);border-color:var(--ac);box-shadow:0 18px 50px -22px var(--glow)}
+.tile:focus-visible{outline:2px solid var(--ac);outline-offset:3px}
+.tile .edge{position:absolute;left:0;top:0;height:100%;width:3px;background:var(--ac);transform:scaleY(0);transform-origin:top;transition:transform .35s}
+.tile:hover .edge{transform:scaleY(1)}
+.tile .sheen{position:absolute;inset:0;pointer-events:none;background:linear-gradient(105deg,transparent 42%,rgba(244,236,221,.09) 50%,transparent 58%);transform:translateX(-130%)}
+.tile:hover .sheen{animation:sheen .9s ease .05s}
+.tile .go{font-family:var(--mono);font-size:12px;color:var(--ac);opacity:0;transform:translateX(-6px);transition:.3s}
+.tile:hover .go{opacity:1;transform:translateX(0)}
+@keyframes sheen{to{transform:translateX(130%)}}
+/* Tiles rise in on `translate`, leaving `transform` free for the hover lift and the pointer tilt:
+   a filled (`forwards`) animation on `transform` would override both for good. */
+@keyframes rise{to{opacity:1;translate:0 0}}
+.tiles>.tile:nth-child(1){animation:rise .6s ease .35s forwards}
+.tiles>.tile:nth-child(2){animation:rise .6s ease .48s forwards}
+.tiles>.tile:nth-child(3){animation:rise .6s ease .60s forwards}
+.tiles>.tile:nth-child(4){animation:rise .6s ease .72s forwards}
+.tiles>.tile:nth-child(5){animation:rise .6s ease .84s forwards}
+.tiles>.tile:nth-child(6){animation:rise .6s ease .96s forwards}
+.tiles>.tile:nth-child(7){animation:rise .6s ease 1.08s forwards}
+
+/* ---- passphrase field (hub gate + back-door modal) ---- */
+.pass{display:flex;gap:8px;border:1px solid var(--line2);border-radius:10px;padding:6px;background:rgba(255,255,255,.02);transition:border-color .25s}
+.pass:focus-within{border-color:rgba(224,176,32,.55)}
+.pass input{flex:1;min-width:0;background:transparent;border:0;outline:0;color:var(--cream);font-size:15px;padding:10px 12px;font-family:var(--mono);letter-spacing:.12em}
+.pass input::placeholder{color:var(--hint);letter-spacing:.04em}
+.pass button{background:var(--cream);color:var(--ink);border:0;border-radius:7px;padding:0 18px;font-weight:600;font-family:var(--mono);font-size:13px;cursor:pointer;transition:transform .12s,background .2s}
+.pass button:hover{transform:translateY(-1px);background:#fff}
+
+/* ---- brand marks: the SVG is a mask, so it takes the colour of `color` ---- */
+.mark{display:inline-block;flex:none;height:100%;aspect-ratio:var(--ratio);background:currentColor;
+  -webkit-mask:var(--src) center/contain no-repeat;mask:var(--src) center/contain no-repeat}
+.mark.capiche{--src:url(/assets/brand/capiche.svg);--ratio:530.34/177.41}
+.mark.aiko{--src:url(/assets/brand/aiko.svg);--ratio:543.63/300}
+.mark.aiko-word{--src:url(/assets/brand/aiko-wordmark.svg);--ratio:1000/62.06}
+
+@media(prefers-reduced-motion:reduce){
+  .field,.ember{animation:none!important}
+  .tile,.title,.kicker,.eyebrow,.tag,.gate,.pk-head,.pk-sub{animation-duration:.01s!important;animation-delay:0s!important}
+  .tile .sheen{display:none}
+}

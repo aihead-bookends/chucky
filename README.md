@@ -4,9 +4,10 @@ Bookends' menu-editor site: the Bookends landing page, the passphrase-gated edit
 editors, the bug-report queue and the secret-menu page, plus the API behind them. A from-scratch
 rebuild of <https://chucky-chi.vercel.app>, built from the UI kit in `../menu-editor`.
 
-**Status:** the site and backend are complete. **Capiche has its menu** and is fully editable (see
-[The Capiche menu](#the-capiche-menu)). The other six editors don't have theirs yet: they show the full
-chrome with an empty editing surface, and Export, Publish, Full Preview and Personalise stay disabled.
+**Status:** the site and backend are complete. **Capiche and Aiko have their menus** and are fully
+editable (see [The Capiche menu](#the-capiche-menu) and [The Aiko menu](#the-aiko-menu)). The other
+five editors don't have theirs yet: they show the full chrome with an empty editing surface, and
+Export, Publish, Full Preview and Personalise stay disabled.
 
 ## Run it locally
 
@@ -205,6 +206,33 @@ prints and how to fix it, and Export is paused until the name fits.
 middle of a word, because the engine joins words with non-breaking spaces. It only affects how text
 wraps on screen. The PDF wraps correctly.
 
+## The Aiko menu
+
+`public/aiko/` holds the same kinds of files as Capiche: `aiko.pdf`, `fieldmap.json`,
+`start-state.json`, `engine.js` and the dictionaries. The current menu is the `Aiko_Menu.pdf` export
+from 29 Sep 2026: `aiko.pdf` with VOLCANO ROLL removed and a new CHEESE & CHILLI DUMPLINGS
+description. The editor rebuilds it exactly, except that the description now fills its first line up
+to the price instead of breaking early.
+
+- **The old site's published Aiko menu was never wrong, only mislabelled.** It was made for the
+  PDF before the 21 Sep QR bake (1,836,681 bytes). The bake left page 1's text bytes identical and
+  kept every byte of page 2 in place, so its two changes still apply to today's `aiko.pdf`. They are
+  what `start-state.json` holds. If the old database is connected, the editor still flags that
+  record as made for another PDF (by file size) and shows the starting menu. That's the same menu,
+  so publish once to replace it.
+- **The weight tag.** Aiko prints each dish's weight ("[250gms]") in small type right after the
+  last line of its description. Wrapping now reserves the tag's width on that last line, for
+  existing dishes (including an edited weight) and for added ones. So filling a line up to the price
+  never pushes the tag into the price column. Tested across 25 description lengths: the tag never
+  came closer than 12pt to the prices.
+- **Also fixed in Aiko:**
+  - The grams box on each dish card had a hard-coded white background; it now matches the editor.
+  - The name warning is re-checked when a marker is toggled, and says what actually prints.
+  - The click boxes follow the real layout.
+  - Everything loads and publishes through MenuState.
+- Aiko's names never take a second line, and its markers don't feed the layout plan, so Capiche's
+  marker-cache fix doesn't apply here.
+
 ## Adding another editor's menu
 
 Follow Capiche:
@@ -234,5 +262,3 @@ offline.
 
 Adding a brand-new editor also needs an entry in `brands.js`, a token block in `editor.css`, and its
 key in the `EDITORS` allowlist in `api/menu-state/[editor].mjs`. The tests fail if any is missing.
-#   c h u c k y - 2  
- 

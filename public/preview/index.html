@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Chucky — Full Preview</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<!--
+  STANDALONE FULL-PAGE PDF PREVIEW
+  ================================
+  This page renders the ACTUAL PDF the editor just generated. It contains NO menu-building logic of
+  its own: the editor calls its own regenerate() — the very same call Export uses — and hands the
+  resulting bytes over through IndexedDB. There is exactly one PDF-generation implementation per
+  editor and this page is a viewer, nothing more.
+
+  Handoff: the editor opens /preview/#<jobId> synchronously (before its await, or the browser blocks
+  the tab as a pop-up), then writes {bytes,...} into IndexedDB under that id. This page polls for the
+  record. The PDF never enters the URL, never touches the network and is never uploaded anywhere; the
+  record is deleted as soon as it is read, and stale records are swept on open.
+-->
+<link rel="preconnect" href="https://cdnjs.cloudflare.com">
+<style>
+:root{
+  --ink:#0E0D0B;--panel:#161410;--card:#1E1B15;
+  --cream:#F4ECDD;--cream-dim:#CFC6B4;--muted:#8F8676;
+  --line:rgba(244,236,221,.10);--line2:rgba(244,236,221,.17);
+  --accent:#ED1C24;--accent-soft:rgba(237,28,36,.13);--accent-line:rgba(237,28,36,.42);
+  --bad:#E5675E;
+  --mono:ui-monospace,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--ink);color:var(--cream);font-family:var(--mono);font-size:13px;
+     line-height:1.45;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+
+/* ---- toolbar ---- */
+header{display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--panel);
+       border-bottom:1px solid var(--line);flex:none;flex-wrap:wrap;position:relative;z-index:3}
+.brand{display:flex;align-items:center;gap:8px;font-weight:600;letter-spacing:.4px;white-space:nowrap}
+.brand .dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.sub{color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:34vw}
+.grow{flex:1;min-width:8px}
+.grp{display:flex;align-items:center;gap:4px;background:var(--card);border:1px solid var(--line2);
+     border-radius:8px;padding:3px}
+.grp button{padding:5px 9px;border-radius:6px;color:var(--cream-dim);white-space:nowrap}
+.grp button:hover:not(:disabled){background:rgba(244,236,221,.08);color:var(--cream)}
+.grp button:disabled{opacity:.35;cursor:default}
+.grp button.on{background:var(--accent-soft);border:1px solid var(--accent-line);color:var(--cream)}
+.zval{min-width:52px;text-align:center;color:var(--cream-dim);font-variant-numeric:tabular-nums}
+.pgind{color:var(--cream-dim);font-variant-numeric:tabular-nums;white-space:nowrap}
+.pgind input{width:38px;background:#100E09;border:1px solid var(--line2);border-radius:5px;
+  color:var(--cream);font:inherit;text-align:center;padding:3px 2px;outline:none}
+.pgind input:focus{border-color:var(--accent-line)}
+.primary{background:var(--accent);color:#fff;border-radius:8px;padding:7px 13px;font-weight:600}
+.primary:hover{filter:brightness(1.08)}
+.ghost{border:1px solid var(--line2);border-radius:8px;padding:7px 12px;color:var(--cream-dim)}
+.ghost:hover{border-color:var(--accent-line);color:var(--cream)}
+
+/* ---- viewer ---- */
+#scroll{flex:1;overflow:auto;padding:20px 0 44px;scroll-behavior:smooth;-webkit-overflow-scrolling:touch}
+#pages{display:flex;flex-direction:column;align-items:center;gap:20px;min-height:100%}
+.pw{position:relative;background:#fff;box-shadow:0 6px 28px rgba(0,0,0,.55);border-radius:2px;
+    max-width:100%;line-height:0}
+.pw canvas{display:block;border-radius:2px}
+.plabel{position:absolute;top:-16px;left:0;font-size:10px;color:var(--muted);line-height:1}
+
+/* ---- states ---- */
+#state{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+       justify-content:center;gap:14px;background:var(--ink);z-index:5;text-align:center;padding:24px}
+#state.hide{display:none}
+.spin{width:30px;height:30px;border:3px solid var(--line2);border-top-color:var(--accent);
+      border-radius:50%;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+#smsg{color:var(--cream-dim);max-width:min(560px,86vw)}
+#shint{color:var(--muted);font-size:11px;max-width:min(560px,86vw)}
+.err .spin{display:none}
+.err #smsg{color:var(--bad)}
+@media (max-width:720px){
+  .sub{display:none}
+  header{gap:6px;padding:8px 10px}
+  .grp button{padding:6px 8px}
+}
+@media (prefers-reduced-motion: reduce){ .spin{animation:none} #scroll{scroll-behavior:auto} }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="brand"><span class="dot"></span>CHUCKY</span>
+  <span class="sub" id="doctitle">Full preview</span>
+  <span class="grow"></span>
+
+  <div class="grp" role="group" aria-label="Zoom">
+    <button id="zout"  title="Zoom out">−</button>
+    <span class="zval" id="zval">100%</span>
+    <button id="zin"   title="Zoom in">+</button>
+    <button id="fitw"  title="Fit the page width">Fit width</button>
+    <button id="fitp"  title="Fit the whole page">Fit page</button>
+  </div>
+
+  <div class="grp" role="group" aria-label="Pages">
+    <button id="prev" title="Previous page">↑</button>
+    <span class="pgind"><input id="pnum" inputmode="numeric" aria-label="Page number" value="1">/<span id="pcount">–</span></span>
+    <button id="next" title="Next page">↓</button>
+  </div>
+
+  <div class="grp">
+    <button id="fs"    title="Full screen">⛶</button>
+    <button id="print" title="Print this PDF">Print</button>
+  </div>
+
+  <button class="ghost"   id="back"     title="Return to the editor">← Editor</button>
+  <button class="primary" id="download" title="Download this PDF">Download</button>
+</header>
+
+<div id="scroll"><div id="pages"></div></div>
+
+<div id="state">
+  <div class="spin"></div>
+  <div id="smsg">Waiting for the editor…</div>
+  <div id="shint">Generating the current menu. This uses the same engine as Export.</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+/* ---------------------------------------------------------------------------------------------
+   IndexedDB handoff (same-origin, client-only). Mirrors the writer in each editor.
+--------------------------------------------------------------------------------------------- */
+const DB_NAME='chucky_preview', STORE='jobs', STALE_MS=10*60*1000;
+function db(){ return new Promise((res,rej)=>{ const r=indexedDB.open(DB_NAME,1);
+  r.onupgradeneeded=()=>{ if(!r.result.objectStoreNames.contains(STORE)) r.result.createObjectStore(STORE); };
+  r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+function idbGet(id){ return db().then(d=>new Promise((res,rej)=>{
+  const tx=d.transaction(STORE,'readonly'), rq=tx.objectStore(STORE).get(id);
+  rq.onsuccess=()=>res(rq.result||null); rq.onerror=()=>rej(rq.error); })); }
+function idbDel(id){ return db().then(d=>new Promise(res=>{
+  const tx=d.transaction(STORE,'readwrite'); tx.objectStore(STORE).delete(id);
+  tx.oncomplete=()=>res(); tx.onerror=()=>res(); })); }
+// housekeeping: a tab closed mid-handoff would otherwise leave a multi-MB PDF sitting in storage
+function sweep(){ db().then(d=>{ const tx=d.transaction(STORE,'readwrite'), os=tx.objectStore(STORE);
+  const rq=os.openCursor(); rq.onsuccess=()=>{ const c=rq.result; if(!c) return;
+    const v=c.value; if(!v || !v.t || Date.now()-v.t>STALE_MS) os.delete(c.key); c.continue(); }; }).catch(()=>{}); }
+
+/* ---------------------------------------------------------------------------------------------
+   Viewer
+--------------------------------------------------------------------------------------------- */
+pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+const $=id=>document.getElementById(id);
+const stateEl=$('state'), scroll=$('scroll'), pagesEl=$('pages');
+let PDF=null, SCALE=1, MODE='fitw', PAGECOUNT=0, BYTES=null, FILENAME='menu.pdf', BACKURL='/chucky/';
+let canvases=[], renderTok=0;
+
+function showState(msg,hint,isErr){ stateEl.classList.remove('hide');
+  stateEl.classList.toggle('err',!!isErr); $('smsg').textContent=msg; $('shint').textContent=hint||''; }
+function hideState(){ stateEl.classList.add('hide'); }
+
+const DPR=()=>Math.min(window.devicePixelRatio||1, 2);   // cap: a 4x DPR tablet would blow memory
+
+async function build(){
+  const tok=++renderTok;
+  pagesEl.innerHTML=''; canvases=[];
+  for(let i=1;i<=PAGECOUNT;i++){
+    const pg=await PDF.getPage(i);
+    if(tok!==renderTok) return;
+    const vp0=pg.getViewport({scale:1});
+    let s=SCALE;
+    if(MODE==='fitw') s=(scroll.clientWidth-48)/vp0.width;
+    else if(MODE==='fitp') s=Math.min((scroll.clientWidth-48)/vp0.width,(scroll.clientHeight-56)/vp0.height);
+    s=Math.max(.1,Math.min(6,s)); SCALE=s;
+    const vp=pg.getViewport({scale:s}), dpr=DPR();
+    const wrap=document.createElement('div'); wrap.className='pw';
+    wrap.style.width=vp.width+'px'; wrap.style.height=vp.height+'px';
+    const lab=document.createElement('div'); lab.className='plabel'; lab.textContent='Page '+i+' of '+PAGECOUNT;
+    const cv=document.createElement('canvas');
+    cv.width=Math.floor(vp.width*dpr); cv.height=Math.floor(vp.height*dpr);
+    cv.style.width=vp.width+'px'; cv.style.height=vp.height+'px';
+    wrap.appendChild(lab); wrap.appendChild(cv); pagesEl.appendChild(wrap); canvases.push(wrap);
+    const ctx=cv.getContext('2d'); ctx.scale(dpr,dpr);
+    await pg.render({canvasContext:ctx,viewport:vp}).promise;
+    if(tok!==renderTok) return;
+  }
+  $('zval').textContent=Math.round(SCALE*100)+'%';
+  $('fitw').classList.toggle('on',MODE==='fitw');
+  $('fitp').classList.toggle('on',MODE==='fitp');
+}
+
+function setZoom(s,mode){ MODE=mode||'manual'; if(s) SCALE=s; build(); }
+$('zin').onclick =()=>setZoom(Math.min(6,SCALE*1.25),'manual');
+$('zout').onclick=()=>setZoom(Math.max(.1,SCALE/1.25),'manual');
+$('fitw').onclick=()=>setZoom(null,'fitw');
+$('fitp').onclick=()=>setZoom(null,'fitp');
+
+function goPage(n){ n=Math.max(1,Math.min(PAGECOUNT,n|0)); const el=canvases[n-1];
+  if(el) scroll.scrollTo({top:el.offsetTop-24}); }
+$('prev').onclick=()=>goPage(currentPage()-1);
+$('next').onclick=()=>goPage(currentPage()+1);
+$('pnum').addEventListener('change',e=>goPage(parseInt(e.target.value,10)||1));
+
+function currentPage(){ const y=scroll.scrollTop+scroll.clientHeight*0.35; let p=1;
+  canvases.forEach((el,i)=>{ if(el.offsetTop<=y) p=i+1; }); return p; }
+scroll.addEventListener('scroll',()=>{ const p=currentPage();
+  if(document.activeElement!==$('pnum')) $('pnum').value=p;
+  $('prev').disabled=p<=1; $('next').disabled=p>=PAGECOUNT; },{passive:true});
+
+$('fs').onclick=()=>{ if(document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen(); };
+
+$('download').onclick=()=>{ if(!BYTES) return;
+  const u=URL.createObjectURL(new Blob([BYTES],{type:'application/pdf'}));
+  const a=document.createElement('a'); a.href=u; a.download=FILENAME; a.click();
+  setTimeout(()=>URL.revokeObjectURL(u),4000); };
+
+// Print the REAL PDF (not a screenshot of the canvases) via a hidden same-origin blob frame.
+$('print').onclick=()=>{ if(!BYTES) return;
+  const u=URL.createObjectURL(new Blob([BYTES],{type:'application/pdf'}));
+  const f=document.createElement('iframe'); f.style.cssText='position:fixed;right:0;bottom:0;width:0;height:0;border:0';
+  f.src=u; document.body.appendChild(f);
+  f.onload=()=>{ try{ f.contentWindow.focus(); f.contentWindow.print(); }catch(_){ window.open(u,'_blank'); }
+                 setTimeout(()=>{ f.remove(); URL.revokeObjectURL(u); },60000); }; };
+
+$('back').onclick=()=>{ if(history.length>1 && document.referrer) history.back(); else location.href=BACKURL; };
+
+addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT') return;
+  if(e.key==='+'||e.key==='=') { e.preventDefault(); $('zin').click(); }
+  else if(e.key==='-')         { e.preventDefault(); $('zout').click(); }
+  else if(e.key==='0')         { e.preventDefault(); $('fitw').click(); }
+  else if(e.key==='PageDown')  { e.preventDefault(); $('next').click(); }
+  else if(e.key==='PageUp')    { e.preventDefault(); $('prev').click(); }
+});
+let rz; addEventListener('resize',()=>{ if(MODE==='manual') return;
+  clearTimeout(rz); rz=setTimeout(()=>build(),160); });
+
+/* ---------------------------------------------------------------------------------------------
+   Boot: wait for the editor's job, then render
+--------------------------------------------------------------------------------------------- */
+async function load(rec){
+  BYTES=rec.bytes instanceof Uint8Array ? rec.bytes : new Uint8Array(rec.bytes);
+  FILENAME=rec.file||'menu.pdf';
+  BACKURL=rec.back||'/chucky/';
+  if(rec.title){ $('doctitle').textContent=rec.title; document.title='Preview — '+rec.title; }
+  showState('Rendering…','');
+  // pdf.js takes ownership of the buffer it is given, so hand it a copy — BYTES stays intact for
+  // Download and Print, which must serve the exact bytes the editor produced.
+  PDF=await pdfjsLib.getDocument({data:BYTES.slice()}).promise;
+  PAGECOUNT=PDF.numPages; $('pcount').textContent=PAGECOUNT;
+  await build();
+  hideState();
+  $('prev').disabled=true; $('next').disabled=PAGECOUNT<=1;
+}
+
+(async function boot(){
+  sweep();
+  const id=(location.hash||'').replace(/^#/,'').trim();
+  if(!id){ showState('Nothing to preview.','Open this page with “Full Preview” from an editor.',true); return; }
+  const deadline=Date.now()+90000;      // a big menu can take a few seconds to regenerate
+  (function poll(){
+    idbGet(id).then(rec=>{
+      if(rec && rec.error){ idbDel(id); showState('The editor could not generate the PDF.',rec.error,true); return; }
+      if(rec && rec.bytes){ idbDel(id);                       // one-shot: never leave the PDF at rest
+        load(rec).catch(e=>showState('Could not display this PDF.',String(e&&e.message||e),true)); return; }
+      if(Date.now()>deadline){ showState('Timed out waiting for the editor.','Close this tab and press “Full Preview” again.',true); return; }
+      setTimeout(poll,150);
+    }).catch(e=>showState('Preview storage unavailable.',String(e&&e.message||e)+' — private browsing can block IndexedDB.',true));
+  })();
+})();
+</script>
+</body>
+</html>

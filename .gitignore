@@ -1,0 +1,8 @@
+node_modules/
+.vercel/
+.env
+.env.*
+!.env.example
+# local dev store (bug reports + published menus written while testing)
+.data/
+.DS_Store

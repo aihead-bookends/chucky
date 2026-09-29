@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bookends</title>
+<meta name="description" content="Bookends Pvt Ltd · Surat & Ahmedabad — digital kitchen workspaces.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/css/site.css">
+<style>
+.field{background:
+  radial-gradient(60% 50% at 50% 6%, rgba(224,176,32,.09), transparent 70%),
+  radial-gradient(50% 40% at 86% 96%, rgba(255,42,26,.07), transparent 70%),
+  radial-gradient(40% 40% at 10% 90%, rgba(224,176,32,.05), transparent 70%)}
+.ember{filter:blur(92px);opacity:.13}
+/* slim top bar — mirrors the editor chrome */
+.bar{position:fixed;top:0;left:0;right:0;z-index:4;display:flex;align-items:center;justify-content:space-between;padding:14px 22px;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.bar .bk{color:var(--cream-dim)}
+.bar .rt{display:flex;align-items:center;gap:8px}
+.bar .dot{width:6px;height:6px;border-radius:50%;background:var(--gold);box-shadow:0 0 8px var(--gold)}
+.hero{margin-bottom:2.4rem}
+.title{font-size:clamp(46px,9.4vw,110px);letter-spacing:-.012em;line-height:.92;animation-delay:.15s}
+.title .g{font-style:italic;color:var(--gold)}
+.kicker{margin-top:1rem;animation-delay:.5s}
+.eyebrow{font-family:var(--mono);font-size:10.5px;letter-spacing:.24em;text-transform:uppercase;color:var(--muted);margin-bottom:14px;text-align:center;opacity:0;animation:fade .7s ease .55s forwards}
+/* one workspace: a single centred column the width of one half of a two-up grid */
+.col{width:min(372px,100%)}
+.tiles{display:grid;gap:18px;perspective:1200px}
+.tile{display:flex;flex-direction:column;justify-content:space-between;min-height:216px;padding:22px 22px 18px;
+  transition:border-color .25s,box-shadow .25s;will-change:transform;transform-style:preserve-3d;
+  --ac:var(--red);--glow:rgba(255,42,26,.5);--soft:rgba(255,42,26,.1);--ac-line:rgba(255,42,26,.38)}
+.tiles>.tile:nth-child(1){animation-delay:.45s}
+.tile:hover{box-shadow:0 24px 60px -26px var(--glow)}
+.tile .edge{width:2.5px}
+.tl-top{display:flex;align-items:center;gap:13px}
+.tl-ico{width:44px;height:44px;flex:none;border-radius:11px;display:grid;place-items:center;background:var(--soft);border:1px solid var(--ac-line);color:var(--ac)}
+.tl-ico svg{width:30px;height:30px}
+.tl-ico .glint{opacity:0}
+.tl-ico.glinting .glint{animation:glint 1s ease}
+@keyframes glint{0%{opacity:0;transform:translateX(-6px)}35%{opacity:.95}100%{opacity:0;transform:translateX(24px)}}
+.tile:hover .tl-ico svg{animation:bob 1.4s ease-in-out infinite}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+.tl-ttl{font-size:clamp(27px,4.4vw,38px);font-weight:600;line-height:1}
+.tl-desc{margin-top:14px;color:var(--cream-dim);font-size:13.5px;line-height:1.5;font-style:italic}
+.meta{margin-top:16px;display:flex;justify-content:space-between;align-items:center;padding-top:14px;border-top:1px solid var(--line)}
+.chips{display:flex;gap:7px}
+.chip{font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;color:var(--muted);border:1px solid var(--line2);border-radius:20px;padding:3px 10px}
+.chip.ac{color:var(--ac);border-color:var(--ac-line);background:var(--soft)}
+.tile .go{opacity:.55;transform:translateX(-4px)}
+/* marquee */
+.marq{position:fixed;bottom:42px;left:0;right:0;z-index:2;overflow:hidden;opacity:0;animation:fade 1s ease 1.1s forwards;
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)}
+.marq .rail{display:flex;width:max-content;animation:rail 36s linear infinite}
+.marq:hover .rail{animation-play-state:paused}
+.marq span{flex:none;font-family:var(--mono);font-size:10.5px;letter-spacing:.3em;color:var(--faint);text-transform:uppercase;padding:0 1.4em;white-space:nowrap}
+.marq b{color:#7a715f;font-weight:500}
+@keyframes rail{to{transform:translateX(-50%)}}
+.foot{bottom:15px;font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase}
+@media(max-width:600px),(max-height:660px){
+  body{overflow:auto}
+  .wrap{height:auto;min-height:100%;justify-content:flex-start;padding:70px 18px 40px}
+  .foot{position:static;margin-top:16px}
+  .marq{position:static;margin-top:28px}
+}
+@media(prefers-reduced-motion:reduce){.marq .rail,.tl-ico svg{animation:none!important}.marq{animation-duration:.01s!important;animation-delay:0s!important}}
+</style>
+</head>
+<body>
+<div class="field"></div>
+<div class="ember a"></div><div class="ember b"></div>
+<div class="grain"></div>
+<div class="bar"><span class="bk">Bookends&nbsp;·&nbsp;R&amp;D</span><span class="rt"><span class="dot"></span>Digital kitchen</span></div>
+<main class="wrap">
+  <div class="hero">
+    <h1 class="title">Book<span class="g">ends</span></h1>
+    <div class="kicker mono">Pvt Ltd · Surat &amp; Ahmedabad</div>
+  </div>
+  <div class="col">
+    <div class="eyebrow">Choose a workspace</div>
+    <div class="tiles">
+      <a class="tile" href="/chucky/">
+        <span class="edge"></span><span class="sheen"></span>
+        <div class="tl-top">
+          <span class="tl-ico" id="cat"><svg viewBox="0 0 220 220" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M70 200 C34 200 36 150 60 128 C72 117 78 116 86 112 C104 124 124 124 142 114 C150 119 160 126 168 138 C190 168 178 201 138 200 C116 200 92 200 70 200 Z"/>
+            <path d="M74 70 L68 30 L94 54 C102 50 118 50 126 56 L152 32 L146 74 C156 96 150 120 110 121 C72 121 64 94 74 70 Z"/>
+            <rect x="74" y="64" width="30" height="18" fill="currentColor" stroke="none"/>
+            <rect x="112" y="62" width="26" height="15" fill="currentColor" stroke="none"/>
+            <rect class="glint" x="82" y="64" width="5" height="17" fill="#F4ECDD" stroke="none" transform="skewX(-18)"/>
+            <path d="M80 88 L58 82 M150 84 L172 78" stroke-width="5"/>
+          </svg></span>
+          <div class="tl-ttl">Chucky</div>
+        </div>
+        <div>
+          <div class="tl-desc">Byte-level menu editor — Capiche, AIkO, Churn'd &amp; Beshak.</div>
+          <div class="meta"><span class="chips"><span class="chip ac">Passphrase</span><span class="chip">Staff</span></span><span class="go">open →</span></div>
+        </div>
+      </a>
+    </div>
+  </div>
+</main>
+<div class="marq" aria-hidden="true"><div class="rail" id="rail"></div></div>
+<div class="foot">Bookends · Surat &amp; Ahmedabad</div>
+<script src="/assets/js/site.js"></script>
+<script>
+(function () {
+  const bit = '<span><b>Capiche!</b> · Italian pizzeria</span><span><b>AIkO</b> · Pan-Asian</span><span><b>Churn’d</b> · Ice cream</span><span><b>Beshak</b> · Gourmet Indian</span><span>Surat</span><span>Ahmedabad</span>';
+  document.getElementById('rail').innerHTML = bit.repeat(8);   // two identical halves: the loop scrolls by -50%
+})();
+(function () {
+  const cat = document.getElementById('cat');
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  setInterval(() => { cat.classList.add('glinting'); setTimeout(() => cat.classList.remove('glinting'), 1100); }, 7000);
+})();
+</script>
+</body>
+</html>

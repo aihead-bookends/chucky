@@ -1,0 +1,19 @@
+{
+ "editor": "aiko",
+ "base": "v1880266",
+ "state": {
+  "edits": {
+   "0:76": "Cheese, tofu, green sauce, fried onion, red chillies, chestnut"
+  },
+  "removed": [
+   "0:103"
+  ],
+  "added": [],
+  "order": {},
+  "persona": {
+   "occasion": "",
+   "guest": ""
+  },
+  "allerEdits": {}
+ }
+}
