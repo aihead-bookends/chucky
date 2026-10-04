@@ -404,9 +404,12 @@ function nameCharClass(ch){
   if(NAME_PUNCT.indexOf(ch)  >= 0) return 'punct';
   return 'native';
 }
+let FULL_NAME_FACE = false;   // chucky-2: true when boot swapped in the full AOMonoBlack
 function nameRunPdf(text, fonts){
   const s = String(text||'');
-  if(!/[0-9.,:\-\/]/.test(s)) return '('+escPdf(s)+')';   // nothing borrowed: byte-identical to before
+  // chucky-2: once the FULL AOMonoBlack is embedded (see FullFonts in boot) it has its own digits and
+  // punctuation, so nothing is borrowed and they print at the name's real weight
+  if(FULL_NAME_FACE || !/[0-9.,:\-\/]/.test(s)) return '('+escPdf(s)+')';   // nothing borrowed: byte-identical to before
   const nameF  = (fonts && fonts.name)  || '/T1_3';
   const digitF = (fonts && fonts.price) || '/T1_4';
   const punctF = (fonts && fonts.desc)  || '/T1_2';
@@ -3822,6 +3825,16 @@ async function boot(){
     document.getElementById('bootmsg').textContent='Loading your menu file…';
     pdfBytesOrig = new Uint8Array(await (await fetch('capiche.pdf?v='+Date.now())).arrayBuffer()); memBaseVer='v'+pdfBytesOrig.length;
     doc = await PDFDocument.load(pdfBytesOrig);
+    /* chucky-2: the PDF's AO Mono faces are subsets (the name face has no Z, Q, X or digits), so swap
+       in the full fonts from /assets/fonts/ and let the editor accept whatever they hold. Name runs
+       are AOMonoBlack, descriptions AOMonoBold; prices stay digits-only. A face that fails to load
+       keeps its subset and its old character list. */
+    document.getElementById('bootmsg').textContent='Loading the menu fonts…';
+    const full = await FullFonts.embed(doc, { AOMonoBlack:'/assets/fonts/Aomono-Black.otf',
+      AOMonoBold:'/assets/fonts/Aomono-Bold.otf', AOMonoRegular:'/assets/fonts/Aomono-Regular.otf' });
+    FULL_NAME_FACE = !!full.AOMonoBlack;
+    if(full.AOMonoBlack) ALLOWED.name = full.AOMonoBlack;
+    if(full.AOMonoBold)  ALLOWED.desc = full.AOMonoBold;
     for(let p=0;p<doc.getPageCount();p++){
       const page=doc.getPage(p); const ref=page.node.get(PDFName.of('Contents'));
       const stream=doc.context.lookup(ref);

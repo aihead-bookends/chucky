@@ -1,7 +1,7 @@
 // Checks a running Chucky site end to end — WITHOUT changing any menu or leaving any data behind.
 //
 //   npm run check -- https://your-site.vercel.app
-//   npm run check -- http://localhost:3000
+//   npm run check -- http://localhost:3002
 //
 // Keys come from --publish-key / --bug-key, else PUBLISH_KEY / BUG_KEY in the environment or .env.
 // Without a key, the checks that need it are skipped (and say so).

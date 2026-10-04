@@ -15,7 +15,7 @@ chrome with an empty editing surface, and Export, Publish, Full Preview and Pers
 ## Run it locally
 
 ```bash
-npm run dev          # http://localhost:3000, and phones on the same Wi-Fi (it prints the address)
+npm run dev          # http://localhost:3002, and phones on the same Wi-Fi (it prints the address)
 npm run dev:local    # this computer only
 npm test             # 38 tests: API routes, publish safety, Upstash client, every page over HTTP, the Capiche files
 npm run check -- <url> # check a running site end to end, without changing any menu (see Deploy)
@@ -23,9 +23,9 @@ npm run check -- <url> # check a running site end to end, without changing any m
 
 Needs Node 20+ and nothing else: there are no dependencies, so there's no `npm install`.
 
-**Opening it on a phone or another computer.** `http://127.0.0.1:3000` and `localhost` only ever
+**Opening it on a phone or another computer.** `http://127.0.0.1:3002` and `localhost` only ever
 mean "this same device", so they can't work anywhere else. `npm run dev` prints the address other
-devices should use (for example `http://172.16.46.203:3000/ (Wi-Fi)`), and
+devices should use (for example `http://172.16.46.203:3002/ (Wi-Fi)`), and
 it works for any device on the same Wi-Fi. If a network blocks devices from reaching each other,
 which some office and guest Wi-Fi does, deploy to Vercel instead. Without https, browsers turn off
 their built-in hashing, so the passphrase check falls back to its own SHA-256 (`sha256Hex` in
@@ -282,6 +282,12 @@ writes the same PDF as the old editor, byte for byte apart from the date.
 
 Changes from the old editor:
 
+- **Every letter and digit can be printed.** The PDF's AO Mono fonts are subsets of the artwork's
+  own letters, so a name with X or Q printed with gaps and a price with 7 or 9 fell back to bold
+  RobotoMono. Like Capiche, the editor now swaps in the full fonts from `assets/fonts/` when it
+  loads (`assets/js/fullfonts.js`), on the loaded copy only, so `capiche-surat.pdf` and every
+  published menu are unchanged. Names and prices accept everything AOMonoRegular has (prices stay
+  digits only), descriptions and volumes everything AOMonoBold has. Ahmedabad does the same.
 - **Photos are published.** The old editor kept an uploaded photo in that browser only, so no other
   device ever saw it. Worse, a device without the photo that published put the drink's old photo
   back for everyone. Now the menu names each drink's photo by id, with its crop:
@@ -314,9 +320,24 @@ title). It works the same way, photos included (see above). Keep the two in step
 the same edits (the Surat list, on all three pages, plus uploaded photos) it writes the same page
 content as the old Ahmedabad editor.
 
+**Removing a drink, in both drinks editors** (`rowMap` and `reflowOps`):
+
+- **The rows stretch to fill the page.** Removing a drink used to slide the rows below it up and leave
+  an empty row at the bottom. Now the surviving rows share the freed height: text is spread through
+  each taller row, and each photo's tile grows with it, the photo zooming slightly so it still
+  covers the tile. Added drinks keep their fixed-height slots under the survivors, so once added
+  drinks fill every freed row the page is laid out exactly as before. A page heading above the rows
+  (Ahmedabad's COFFEE & MATCHA) stays put.
+- **The photo of the drink above no longer slides within its tile.** A photo is often a tall image
+  clipped to its tile and drawn from a point below it; the reflow moved the image but not the clip.
+  Everything in a photo block now moves with its tile.
+- **A removed drink's unlisted artwork goes with it.** Ahmedabad's V60 drinks draw their heading and
+  their "Ask your server…" line outside the fieldmap's spans (the line is a separate Form XObject),
+  so removing INTERNATIONAL left both behind, and INDIAN's line stayed put when its row moved. Now
+  artwork inside a removed row's band is dropped, and such a line moves with its row.
+
 Carried over from the old editor, not yet fixed:
 
-- Removing a drink slides the photo of the drink above it within its tile.
 - A drink added in a freed slot has its markers close against the end of its name.
 
 ## The Beshak menu

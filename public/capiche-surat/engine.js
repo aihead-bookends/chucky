@@ -233,24 +233,100 @@ function stampNewDrink(pd, slotY, dr){
   return out;
 }
 // Reflow: shift every Tm and photo-block y that sits BELOW a removed drink up by row_h per removed-above.
-function reflowOps(bytes, removedTops, delSpans, rowH){
+/* chucky-2: ROWS STRETCH TO FILL THE PAGE. Removing a drink used to slide the rows below it up
+   one row and leave that row empty at the bottom of the page. Now the surviving rows share the freed
+   height: each keeps its share of the strip, times k = (strip - added rows) / survivors' height.
+   Added drinks keep their fixed-height slots below the survivors, so when they fill every freed row
+   k is 1 and this is exactly the old shift.
+
+   rowMap() returns map(y): a piecewise-linear map from the artwork's y to the reflowed y, one piece
+   per surviving row (its band, from the photo grid, the way pvBoxes derives it), reaching 1.5pt past
+   the band so a divider drawn on the seam stays with it. A point inside a REMOVED row's band maps to
+   OFF, below the page: that is artwork the fieldmap never listed for the drink (AHM's INTERNATIONAL
+   keeps its "V60 POUR OVER" heading outside every span), and it goes with the drink. Everything
+   outside the strip (a page heading above it) stays put. isGone(slotIdx) says whether a slot's
+   drink is removed. */
+const ROW_OFF=-10000;
+function rowMap(p, isGone, addCount){
+  const pd=FM.pages.find(x=>x.page===p); const rowH=FM.row_h||60;
+  const H=(FM.page_sizes&&FM.page_sizes[p])? FM.page_sizes[p][1] : 595.28;
+  const rows=[]; let prevTop=0;
+  (pd? pd.items : []).map((it,idx)=>({it,idx})).filter(o=>o.it.top_y!=null)
+    .sort((a,b)=>a.it.top_y-b.it.top_y)                       // bottom of page first
+    .forEach(({it,idx})=>{
+      const t=it.photo_tile; const bot=t? t[1] : prevTop; const top=t? t[1]+t[3] : Math.min(H, bot+(it.pitch||rowH));
+      prevTop=Math.max(prevTop,top); rows.push({idx,b:bot,t:top,gone:!!isGone(idx)});
+    });
+  rows.forEach((r,i)=>{ if(rows[i+1]) r.t=rows[i+1].b; });   // tiles overlap by ~0.2pt: make the bands a partition
+  const _pp=(pd? pd.items : []).map(it=>it.pitch).filter(Boolean).sort((a,b)=>a-b);
+  const ROW=_pp.length? _pp[Math.floor(_pp.length/2)] : rowH;   // the added-drink slot, as regenerate() uses
+  const surv=rows.filter(r=>!r.gone).reverse();                 // top of page first
+  const lo=rows.length? rows[0].b : 0, hi=rows.length? rows[rows.length-1].t : H;
+  const survH=surv.reduce((a,r)=>a+(r.t-r.b),0);
+  const k=survH>0? Math.max(1,(hi-lo-(addCount||0)*ROW)/survH) : 1;
+  let cur=hi; const segs=surv.map(r=>{ const T=cur, B=T-(r.t-r.b)*k; cur=B; return {idx:r.idx,b:r.b,t:r.t,B,T,k}; });
+  const segAt=y=> segs.find(g=> y>=g.b-1e-6 && y<=g.t+1e-6) || segs.find(g=> y>=g.b-1.5 && y<=g.t+1.5);
+  const map=y=>{
+    if(!segs.length) return rows.some(r=>r.gone && y>r.b && y<r.t)? ROW_OFF : y;
+    const g=segAt(y); if(g) return g.B+(y-g.b)*g.k;
+    if(rows.some(r=>r.gone && y>r.b && y<r.t)) return ROW_OFF;     // the removed drink's own artwork
+    if(y>segs[0].t) return y+(segs[0].T-segs[0].t);
+    const L=segs[segs.length-1]; return y<L.b? y+(L.B-L.b) : y;
+  };
+  const moved=rows.some(r=>r.gone) || segs.some(g=>Math.abs(g.B-g.b)>0.005||Math.abs(g.k-1)>1e-6);
+  const movesAt=y=> Math.abs(map(y)-y)>0.005;
+  return {map, k, moved, movesAt, segAt, end:cur};
+}
+// name -> centre y of each Form XObject on page p (its BBox, through its Matrix). QR codes are left to QRK.
+function pageForms(p){
+  const out={}; const xo=doc.getPage(p).node.Resources().lookupMaybe(PDFName.of('XObject'), PDFLib.PDFDict); if(!xo) return out;
+  for(const [k,v] of xo.entries()){ const o=doc.context.lookup(v); const d=o&&o.dict; if(!d) continue;
+    if(String(d.get(PDFName.of('Subtype')))!=='/Form' || d.get(PDFName.of('ChuckyQR'))) continue;
+    const bb=d.lookupMaybe(PDFName.of('BBox'), PDFLib.PDFArray); if(!bb) continue;
+    const mx=d.lookupMaybe(PDFName.of('Matrix'), PDFLib.PDFArray), n=a=>a.asArray().map(x=>x.asNumber());
+    const [,y0,,y1]=n(bb), mt=mx? n(mx) : [1,0,0,1,0,0];
+    if(mt[1]||mt[2]) continue;                                    // rotated/skewed: not a placed line of art
+    out[k.asString().slice(1)]=(y0+y1)/2*mt[3]+mt[5]; }
+  return out;
+}
+/* Rewrite every position in the artwork through rm.map: text Tm, cm transforms (badges, markers,
+   QR) and rectangles (dividers, SPECIALS bars). `blocks` are the survivors' photo blocks
+   {s,e,tile}: there the clip IS the tile, so it is stretched to the row's new band, and the image is
+   scaled by the row's k about the tile centre so it still covers it without distortion. A photo is
+   often a tall image drawn from a point far below its clip (PINA COLADA's from y 217, clipped to
+   330-397), so it must be moved by its tile, never by its own y.
+   `forms` maps a Form XObject's name to the y its artwork sits at: AHM draws a drink's
+   "Ask your server…" line as a form placed by its own coordinates (`/Fm0 Do`, no cm), so it moves
+   with a cm of its own, or is dropped with its drink. */
+function reflowOps(bytes, rm, delSpans, blocks, forms){
   const s=new TextDecoder('latin1').decode(bytes); const ops=[];
   const inDel=i=> delSpans.some(d=> d[0]<=i && i<d[1]);
-  // shift = sum of the ACTUAL heights (pitch) of removed drinks sitting above this y
-  const shiftFor=y=> removedTops.filter(t=> t.y>y+0.5).reduce((a,t)=>a+t.pitch,0);
+  const blockAt=i=> (blocks||[]).find(b=> b.s<=i && i<b.e);
+  const M=rm.map, same=(a,b)=>Math.abs(a-b)<0.005;
   let m;
-  // text Tm ops: shift the y
+  // text Tm ops: map the y
   let re1=/([\d.]+) 0 0 ([\d.]+) (-?[\d.]+) (-?[\d.]+) Tm/g;
-  while((m=re1.exec(s))){ if(inDel(m.index)) continue; const y=parseFloat(m[4]); const sh=shiftFor(y); if(!sh) continue;
-    ops.push({s:m.index,e:m.index+m[0].length,rep:enc(m[1]+' 0 0 '+m[2]+' '+m[3]+' '+num(y+sh)+' Tm')}); }
-  // affine cm transforms (photos incl rotated, badges): shift the ty (group 6). skip delSpans
+  while((m=re1.exec(s))){ if(inDel(m.index)) continue; const y=parseFloat(m[4]), y2=M(y); if(same(y,y2)) continue;
+    ops.push({s:m.index,e:m.index+m[0].length,rep:enc(m[1]+' 0 0 '+m[2]+' '+m[3]+' '+num(y2)+' Tm')}); }
+  // affine cm transforms: map the ty; a photo's image is scaled about its tile centre instead
   let re2=/(-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) cm/g;
-  while((m=re2.exec(s))){ if(inDel(m.index)) continue; const y=parseFloat(m[6]); const sh=shiftFor(y); if(!sh) continue;
-    ops.push({s:m.index,e:m.index+m[0].length,rep:enc(m[1]+' '+m[2]+' '+m[3]+' '+m[4]+' '+m[5]+' '+num(y+sh)+' cm')}); }
-  // rectangles (clip tiles, SPECIALS bars, dividers): shift y. skip full-page (|h|>400) & delSpans
+  while((m=re2.exec(s))){ if(inDel(m.index)) continue; const v=m.slice(1,7).map(parseFloat); const b=blockAt(m.index);
+    if(b){ const t=b.tile, cx=t[0]+t[2]/2, cy=t[1]+t[3]/2, cy2=M(cy), g=rm.segAt(cy), k=g? g.k : 1;
+      if(same(cy,cy2) && k===1) continue;
+      ops.push({s:m.index,e:m.index+m[0].length,rep:enc([v[0]*k,v[1]*k,v[2]*k,v[3]*k,cx+(v[4]-cx)*k,cy2+(v[5]-cy)*k].map(x=>(+x.toFixed(4))+'').join(' ')+' cm')});
+      continue; }
+    const y2=M(v[5]); if(same(v[5],y2)) continue;
+    ops.push({s:m.index,e:m.index+m[0].length,rep:enc(m[1]+' '+m[2]+' '+m[3]+' '+m[4]+' '+m[5]+' '+num(y2)+' cm')}); }
+  // rectangles: map the y (a photo clip also takes the row's new height). skip full-page (|h|>400)
   let re3=/(-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) re/g;
-  while((m=re3.exec(s))){ if(inDel(m.index)) continue; const y=parseFloat(m[2]), h=parseFloat(m[4]); if(Math.abs(h)>400) continue; const sh=shiftFor(y+h/2); if(!sh) continue;
-    ops.push({s:m.index,e:m.index+m[0].length,rep:enc(m[1]+' '+num(y+sh)+' '+m[3]+' '+m[4]+' re')}); }
+  while((m=re3.exec(s))){ if(inDel(m.index)) continue; const y=parseFloat(m[2]), h=parseFloat(m[4]); if(Math.abs(h)>400) continue;
+    const y2=M(y), h2=blockAt(m.index)? M(y+h)-y2 : h; if(same(y,y2) && same(h,h2)) continue;
+    ops.push({s:m.index,e:m.index+m[0].length,rep:enc(m[1]+' '+num(y2)+' '+m[3]+' '+num(h2)+' re')}); }
+  // forms drawn by their own coordinates
+  let re4=/\/([A-Za-z0-9_.]+) Do\b/g;
+  while((m=re4.exec(s))){ if(inDel(m.index) || blockAt(m.index)) continue; const y=forms&&forms[m[1]]; if(y==null) continue;
+    const y2=M(y); if(same(y,y2)) continue;
+    ops.push({s:m.index,e:m.index+m[0].length,rep:enc(y2===ROW_OFF? '' : 'q 1 0 0 1 0 '+num(y2-y)+' cm '+m[0]+' Q')}); }
   return ops;
 }
 const enc=s=>new TextEncoder().encode(s);
@@ -1735,7 +1811,7 @@ async function regenerate(){
     let ops=[]; let append='';
     const getOrigIdx=slotIdx=>(reorder[mp]&&reorder[mp][slotIdx]!=null)?reorder[mp][slotIdx]:slotIdx;
     // 1) removed drinks: collect delete spans + tops
-    const delSpans=[]; const removedTops=[];
+    const delSpans=[];
     pageData.items.forEach((it,idx)=>{ const origIdx=getOrigIdx(idx); if(!removed.has(K0(mp,origIdx))) return;
       (it.name_spans||[]).forEach(sp=>delSpans.push(sp)); (it.desc_spans||[]).forEach(sp=>delSpans.push(sp));
       if(it.price_span)delSpans.push(it.price_span); if(it.vol_span)delSpans.push(it.vol_span);
@@ -1744,8 +1820,12 @@ async function regenerate(){
       if(it.marker_span)delSpans.push(it.marker_span); if(it.photo_span)delSpans.push(it.photo_span);
       if(it.dairy_span)delSpans.push(it.dairy_span);
       (it.extra_spans||[]).forEach(sp=>delSpans.push(sp));
-      if(it.top_y!=null) removedTops.push({y:it.top_y, pitch:(it.pitch||rowH)});
     });
+    const photoBlocks=[];   // chucky-2: survivors' photo blocks move as one, by their tile (see reflowOps)
+    pageData.items.forEach((it,idx)=>{ if(removed.has(K0(mp,getOrigIdx(idx)))||!it.photo_span||!it.photo_tile) return;
+      photoBlocks.push({s:it.photo_span[0], e:it.photo_span[1], tile:it.photo_tile}); });
+    // chucky-2: survivors stretch to fill the rows removals free (see rowMap)
+    const RM=rowMap(mp, idx=>removed.has(K0(mp,getOrigIdx(idx))), (added[mp]||[]).length), Y=RM.map;
     const volSkip=[];
     // Vertical layout for every touched row, decided BEFORE reflowOps runs so the Tm ranges we are
     // about to rewrite can be excluded from it (two ops over one range corrupt spliceBytes). The
@@ -1829,13 +1909,12 @@ async function regenerate(){
     // Tm (see the name splice below). That Tm must ALSO be hidden from reflowOps for the same
     // reason volumes are — decided here, before reflowOps runs, and the row shift is applied by hand.
     // 2) reflow survivors below removed drinks (shift by real heights)
-    if(removedTops.length) ops=ops.concat(reflowOps(ps.pristine, removedTops, delSpans.concat(volSkip), rowH));
-    const shiftOf=y=> removedTops.filter(t=>t.y>((y||0)+0.5)).reduce((a,t)=>a+t.pitch,0);
+    if(RM.moved) ops=ops.concat(reflowOps(ps.pristine, RM, delSpans.concat(volSkip), photoBlocks, pageForms(mp)));
     // 3) text edits + prices for survivors
     pageData.items.forEach((it,idx)=>{
       const origIdx=getOrigIdx(idx); const origIt=pageData.items[origIdx]; const isReordered=origIdx!==idx;
       if(removed.has(K0(mp,origIdx))) return;
-      const sh=shiftOf(it.top_y);
+      const sh=RM.movesAt(it.top_y);   // does this row move at all (positions go through Y)
       // name: always splice when reordered; use origIt's content as baked fallback
       if((isReordered||K(mp,origIdx,'name') in edits)&&it.name_spans.length){
         const lay=layout.get(idx);
@@ -1857,9 +1936,9 @@ async function regenerate(){
       // re-anchor the row's blocks to the bottom-up layout (sh by hand: reflowOps skips these Tms)
       { const lay=layout.get(idx);
         if(lay&&lay.moveN) ops.push({s:lay.ng.tm.s,e:lay.ng.tm.e,
-          rep:enc(lay.ng.tm.txt.replace(/(-?[\d.]+) Tm$/, num(lay.L.nameY0+sh)+' Tm'))});
+          rep:enc(lay.ng.tm.txt.replace(/(-?[\d.]+) Tm$/, num(Y(lay.L.nameY0))+' Tm'))});
         if(lay&&lay.moveD) ops.push({s:lay.dtm.s,e:lay.dtm.e,
-          rep:enc(lay.dtm.txt.replace(/(-?[\d.]+) Tm$/, num(lay.L.descY0+sh)+' Tm'))});
+          rep:enc(lay.dtm.txt.replace(/(-?[\d.]+) Tm$/, num(Y(lay.L.descY0))+' Tm'))});
       }
       // description: for a reordered slot with no edit, write origIt's baked desc into this slot's spans
       let _dr=K(mp,origIdx,'desc') in edits ? descRender(mp,origIdx,origIt) : null;
@@ -1899,9 +1978,9 @@ async function regenerate(){
         }
         const va=(FM.allowed&&FM.allowed.desc)||'';
         const vfits=!!vtxt&&[...vtxt].every(c=>va.indexOf(c)>=0);
-        if(vfits) ops.push({s:it.vol_span[0],e:it.vol_span[1],rep:enc('5 0 0 5 '+num(vp.x)+' '+num(vp.y+sh)+' Tm\n('+escPdf(vtxt)+')Tj')});
+        if(vfits) ops.push({s:it.vol_span[0],e:it.vol_span[1],rep:enc('5 0 0 5 '+num(vp.x)+' '+num(Y(vp.y))+' Tm\n('+escPdf(vtxt)+')Tj')});
         else { ops.push({s:it.vol_span[0],e:it.vol_span[1],rep:enc(keepState(PT.slice(0,it.vol_span[1])))});
-               if(vtxt) append+=volStamp({x:vp.x,y:vp.y+sh,size:it.vol_pos.size},origIt.vol_color||it.vol_color,vtxt); }
+               if(vtxt) append+=volStamp({x:vp.x,y:Y(vp.y),size:it.vol_pos.size},origIt.vol_color||it.vol_color,vtxt); }
       }
       if(it.price_span){ const pv=val(mp,origIdx,'price',origIt.price);
         const pa=(FM.allowed&&FM.allowed.price)||'0235';
@@ -1909,11 +1988,11 @@ async function regenerate(){
         // The price NEVER moves: rowLayout pins the description's last line to the baked
         // baseline the price already sits on, so the text comes to the price instead.
         if(fits){ if(isReordered||K(mp,origIdx,'price') in edits) ops.push({s:it.price_span[0],e:it.price_span[1],rep:enc('('+escPdf(pv)+')Tj')}); }
-        else { ops.push({s:it.price_span[0],e:it.price_span[1],rep:enc('()Tj')}); if(it.price_pos&&pv) append+=priceStamp({x:it.price_pos.x,y:it.price_pos.y+sh,size:it.price_pos.size},pv); }
+        else { ops.push({s:it.price_span[0],e:it.price_span[1],rep:enc('()Tj')}); if(it.price_pos&&pv) append+=priceStamp({x:it.price_pos.x,y:Y(it.price_pos.y),size:it.price_pos.size},pv); }
       }
       // uploaded photo -> draw over the drink's (shifted) tile; keyed by origIdx (photo belongs to the drink)
       const up=photoUploads[K0(mp,origIdx)];
-      if(up&&it.photo_tile){ const t=it.photo_tile; append+=photoDrawOp(up,[t[0],t[1]+sh,t[2],t[3]]); }
+      if(up&&it.photo_tile){ const t=it.photo_tile; append+=photoDrawOp(up,[t[0],Y(t[1]),t[2],Y(t[1]+t[3])-Y(t[1])]); }
       // Baked markers packed too tight against the title get nudged clear (artwork fix). Only for
       // rows we are NOT restamping below — a restamp already places the cluster from scratch — and
       // only once the menu has been touched at all: an export with NO edits must stay byte-identical
@@ -1923,7 +2002,7 @@ async function regenerate(){
       // rewrites. Two ops over one range corrupt the stream (spliceBytes assumes non-overlap), so
       // a moving row keeps its baked spacing; the nudge is cosmetic and reflow is not.
       if(_anyEdit && !sh && !(K(mp,origIdx,'name') in edits) && !(K0(mp,origIdx) in markerEdits) && !isReordered){
-        const _tidy=tidyMarkerOps(it, PT, sh)
+        const _tidy=tidyMarkerOps(it, PT, 0)
           .filter(t=>!ops.some(o=>o.s<t.e && o.e>t.s));   // belt-and-braces: never double-write a range
         ops=ops.concat(_tidy);
       }
@@ -1935,7 +2014,7 @@ async function regenerate(){
         const set=(K0(mp,origIdx) in markerEdits)?new Set(markerEdits[K0(mp,origIdx)]):drinkMarkerSet(mp,origIdx,origIt);
         const _lg=layout.get(idx), _ly=_lg?_lg.L.nameY0:null;
         const a=_nameEd?editedNameAnchor(it,renderedNameLines(it,PT,val(mp,origIdx,'name',origIt.name)),PT,_ly):(_ly!=null?[it.mk_anchor[0],it.mk_anchor[1]+(_ly-nameGeomOf(it,PT).topY)]:it.mk_anchor);
-        append+=stampMarkers(a[0],a[1]+sh,set);
+        append+=stampMarkers(a[0],Y(a[1]),set);
         // Baked icons the fieldmap never captured (MANGO PICANTE's chillies, stray badges) sit after
         // the J under no span, so a rename left them stranded on top of the new title. Ride them
         // along by the same delta the cluster moved.
@@ -1947,14 +2026,14 @@ async function regenerate(){
       // ---- SPECIALS bar. Emitted AFTER photoDrawOp above so an upload can't bury it. ----
       if(drinkSpecials(mp,origIdx,origIt)&&(!it.specials_span||up)){
         const _sp=specialsPlace(it);
-        if(_sp) append+=specialsStamp(_sp,sh,pageData.bold_font||'T1_0');
+        if(_sp) append+=specialsStamp(_sp,Y(_sp.g[1])-_sp.g[1],pageData.bold_font||'T1_0');
       }
       // ---- NEW badge. Restamped whenever the name or markers moved (it packs after the cluster). ----
       if(drinkBadge(mp,origIdx,origIt)&&(!it.badge_span||_nameEd||_mkEd||_mvN)){
         const _bs=(K0(mp,origIdx) in markerEdits)?new Set(markerEdits[K0(mp,origIdx)]):drinkMarkerSet(mp,origIdx,origIt);
         // an untouched drink that merely had its badge switched back on lands on the baked position
-        if(it.badge_pos&&!_nameEd&&!_mkEd&&!_mvN) append+=badgeStamp(it.badge_pos[0],it.badge_pos[1]+sh);
-        else { const _bl=layout.get(idx); const _bp=badgePlace(it,mp,origIdx,_bs,PT,_bl?_bl.L.nameY0:null); if(_bp) append+=badgeStamp(_bp.x,_bp.y+sh); }
+        if(it.badge_pos&&!_nameEd&&!_mkEd&&!_mvN) append+=badgeStamp(it.badge_pos[0],Y(it.badge_pos[1]));
+        else { const _bl=layout.get(idx); const _bp=badgePlace(it,mp,origIdx,_bs,PT,_bl?_bl.L.nameY0:null); if(_bp) append+=badgeStamp(_bp.x,Y(_bp.y)); }
       }
     });
     // 4) added drinks -> stack into the space freed below the LAST survivor's real content.
@@ -1969,7 +2048,7 @@ async function regenerate(){
       const ROW = _pp.length? _pp[Math.floor(_pp.length/2)] : rowH;   // median row (1st row can be an outlier)
       let lastTileY;
       if(survs.length){ const last=survs.reduce((a,b)=> a.it.top_y<=b.it.top_y? a:b);
-        lastTileY = (last.it.photo_tile? last.it.photo_tile[1] : last.it.top_y-46) + shiftOf(last.it.top_y); }
+        lastTileY = Y(last.it.photo_tile? last.it.photo_tile[1] : last.it.top_y-46); }
       else lastTileY = ((pageData.items[0]&&pageData.items[0].photo_tile)? pageData.items[0].photo_tile[1]+ROW : 529.2+ROW);
       addList.forEach((dr,i)=>{ const tileY = lastTileY - ROW*(i+1); const by = tileY + 46; if(tileY>-2){ append+=stampNewDrink(pageData, by, dr);
         const up=photoUploads[mp+':add:'+i]; if(up) append+=photoDrawOp(up, [181.03, tileY, 99.6, 66]);
@@ -2023,8 +2102,7 @@ function pvBoxes(p){
   const pd=FM.pages.find(x=>x.page===p); if(!pd) return [];
   const rowH=FM.row_h||60;
   const H=(FM.page_sizes&&FM.page_sizes[p])? FM.page_sizes[p][1] : 595.28;
-  const rmTops=[]; pd.items.forEach((it,idx)=>{ if(removed.has(K0(p,idx))&&it.top_y!=null) rmTops.push({y:it.top_y,pitch:(it.pitch||rowH)}); });
-  const rise=y=> rmTops.filter(t=> t.y>((y||0)+0.5)).reduce((a,t)=>a+t.pitch,0);
+  const RM=rowMap(p, idx=>removed.has(K0(p,idx)), (added[p]||[]).length);   // chucky-2: the same stretch the PDF gets
   const band={}; let prevTop=0;
   pd.items.map((it,idx)=>({it,idx})).filter(o=>o.it.top_y!=null)
     .sort((a,b)=>a.it.top_y-b.it.top_y)                       // bottom of page first
@@ -2037,8 +2115,8 @@ function pvBoxes(p){
   const out=[];
   pd.items.forEach((it,idx)=>{
     if(removed.has(K0(p,idx)) || !band[idx]) return;
-    const sh=rise(it.top_y), b=band[idx];
-    out.push({id:K0(p,idx), x0:5, x1:b.right, top:b.top+sh, bot:b.bot+sh});
+    const b=band[idx];
+    out.push({id:K0(p,idx), x0:5, x1:b.right, top:RM.map(b.top), bot:RM.map(b.bot)});
   });
   return out;
 }
@@ -2734,6 +2812,16 @@ async function boot(){
     document.getElementById('bootmsg').textContent='Loading your menu…';
     pdfBytesOrig=new Uint8Array(await (await fetch(BRAND.pdf+'?v='+Date.now())).arrayBuffer()); memBaseVer='v'+pdfBytesOrig.length;
     doc=await PDFDocument.load(pdfBytesOrig);
+    /* chucky-2: the PDF's AO Mono faces are subsets (no X, Q, 7, 9…), so swap in the full fonts from
+       /assets/fonts/ (see assets/js/fullfonts.js) and let the editor accept whatever they hold. Names
+       and prices are AOMonoRegular, descriptions and volumes AOMonoBold; prices stay digits-only. A
+       face that fails to load keeps its subset and its old character list. */
+    document.getElementById('bootmsg').textContent='Loading the menu fonts…';
+    const full=await FullFonts.embed(doc,{ AOMonoBlack:'/assets/fonts/Aomono-Black.otf',
+      AOMonoBold:'/assets/fonts/Aomono-Bold.otf', AOMonoRegular:'/assets/fonts/Aomono-Regular.otf' });
+    if(full.AOMonoRegular){ FM.allowed.name=full.AOMonoRegular;
+      FM.allowed.price=[...new Set(FM.allowed.price+full.AOMonoRegular.replace(/[^0-9]/g,''))].join(''); }
+    if(full.AOMonoBold) FM.allowed.desc=full.AOMonoBold;
     for(let p=0;p<doc.getPageCount();p++){ const page=doc.getPage(p); const ref=page.node.get(PDFName.of('Contents')); const stream=doc.context.lookup(ref); pageStreams.push({ref,dict:stream.dict,pristine:stream.contents.slice()}); }
     /* chucky-2: MenuState.boot retries the load, applies a published state only if it was made for
        THIS base PDF, falls back to the menu's starting state (start-state.json), and puts up a bar

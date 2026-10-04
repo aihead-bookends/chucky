@@ -1,7 +1,7 @@
 // Local stand-in for Vercel: serves public/ and routes /api/* to the same handler files Vercel deploys
 // (filesystem routing, [param] segments included), so what runs here is what ships.
 //
-//   npm run dev              http://localhost:3000, and every device on the same Wi-Fi (it prints the address)
+//   npm run dev              http://localhost:3002, and every device on the same Wi-Fi (it prints the address)
 //   npm run dev:local        this computer only
 //   npm run dev -- --port 4000
 //
@@ -24,7 +24,7 @@ const MIME = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',
   '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.pdf': 'application/pdf',
-  '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8', '.webmanifest': 'application/manifest+json',
+  '.woff2': 'font/woff2', '.otf': 'font/otf', '.txt': 'text/plain; charset=utf-8', '.webmanifest': 'application/manifest+json',
 };
 
 // /api/menu-state/capiche -> api/menu-state/[editor].mjs, mirroring Vercel. Segments starting with
@@ -154,7 +154,7 @@ function loadDotEnv(file) {
 
 function main() {
   const arg = (name, dflt) => { const i = process.argv.indexOf('--' + name); return i > 0 ? process.argv[i + 1] : dflt; };
-  const port = Number(arg('port', process.env.PORT || 3000));
+  const port = Number(arg('port', process.env.PORT || 3002));
   // on the network by default, so phones on the same Wi-Fi can open it; --local for this computer only
   const host = process.argv.includes('--local') ? '127.0.0.1' : arg('host', process.env.HOST || '0.0.0.0');
 
