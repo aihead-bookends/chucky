@@ -6,6 +6,8 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { createDevServer } from '../dev/server.mjs';
 import { setStore, memoryStore } from '../api/_lib/store.mjs';
+import { setDb } from '../api/_lib/db.mjs';
+import { setPhotoStore } from '../api/_lib/photos.mjs';
 import { EDITORS } from '../api/menu-state/[editor].mjs';
 
 const EDITOR_PAGES = ['capiche', 'aiko', 'churnd', 'beshak', 'drinks', 'capiche-surat', 'capiche-ahm'];
@@ -15,6 +17,8 @@ before(async () => {
   process.env.BUG_KEY = 'bk';
   process.env.PUBLISH_KEY = 'pk';
   setStore(memoryStore());
+  setDb(null);
+  setPhotoStore(null);
   server = createDevServer();
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${server.address().port}`;
@@ -114,7 +118,7 @@ test('publish → read back → stale publish refused → history, end to end', 
 
 test('health says the backend is up', async () => {
   const res = await get('/api/health');
-  assert.deepEqual(await res.json(), { ok: true, store: 'memory', storeOk: true, bugKey: true, publishKey: true });
+  assert.deepEqual(await res.json(), { ok: true, store: 'memory', storeOk: true, menus: 'memory', menusOk: true, bugKey: true, publishKey: true });
 });
 
 test('the passphrase check works without crypto.subtle (phones on http://<network address>)', async () => {

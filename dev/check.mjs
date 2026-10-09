@@ -1,7 +1,7 @@
 // Checks a running Chucky site end to end — WITHOUT changing any menu or leaving any data behind.
 //
 //   npm run check -- https://your-site.vercel.app
-//   npm run check -- http://localhost:3002
+//   npm run check -- http://localhost:3003
 //
 // Keys come from --publish-key / --bug-key, else PUBLISH_KEY / BUG_KEY in the environment or .env.
 // Without a key, the checks that need it are skipped (and say so).
@@ -68,9 +68,13 @@ await step('Backend health', async () => {
   if (r.status !== 200 && r.status !== 503) return fail('/api/health answered ' + r.status);
   const h = r.body || {};
   const local = /localhost|127\.0\.0\.1/.test(site);
-  if (!h.storeOk) fail(`storage is not working (store: ${h.store}${h.storeError ? ', ' + h.storeError : ''}) — connect Upstash Redis`);
-  else if (h.store !== 'upstash' && !local) fail(`storage is "${h.store}", not Upstash — published menus would not be shared or kept`);
-  else pass(`storage: ${h.store}, reachable`);
+  // published menus and photos (Postgres), then bug reports (Postgres too, in its kv table)
+  if (!h.menusOk) fail(`menu storage is not working (${h.menus}${h.menusError ? ': ' + h.menusError : ''}) — connect Neon Postgres and run npm run db:migrate`);
+  else if (h.menus !== 'postgres' && !local) fail(`menus are stored in "${h.menus}", not Postgres — set DATABASE_URL (Neon)`);
+  else pass(`menus: ${h.menus}${h.schema ? ', tables in place' : ''}`);
+  if (!h.storeOk) fail(`bug-report storage is not working (store: ${h.store}${h.storeError ? ', ' + h.storeError : ''})`);
+  else if (h.store !== 'postgres' && !local) fail(`bug reports are stored in "${h.store}", not Postgres — set DATABASE_URL (Neon)`);
+  else pass(`bug reports: ${h.store}, reachable`);
   h.publishKey ? pass('PUBLISH_KEY is set') : fail('PUBLISH_KEY is not set — nobody can publish');
   h.bugKey ? pass('BUG_KEY is set') : fail('BUG_KEY is not set — the bug queue can’t be opened');
 });

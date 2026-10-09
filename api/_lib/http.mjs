@@ -16,7 +16,7 @@ export const J = (body, status = 200) =>
 export const preflight = () => new Response(null, { status: 204, headers: cors });
 
 export const notConfigured = () =>
-  J({ ok: false, error: 'store not configured — connect Upstash Redis (see README)' }, 503);
+  J({ ok: false, error: 'storage not configured — set DATABASE_URL (Neon Postgres, see README)' }, 503);
 
 // Keys are sent as `Authorization: Bearer <key>`. `?k=<key>` still works for scripts written against
 // the old API, but the header keeps the key out of access logs, history and Referer.

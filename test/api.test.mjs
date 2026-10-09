@@ -2,6 +2,8 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { setStore, memoryStore } from '../api/_lib/store.mjs';
+import { setDb } from '../api/_lib/db.mjs';
+import { setPhotoStore } from '../api/_lib/photos.mjs';
 import postBug from '../api/bug.mjs';
 import listBugs from '../api/bugs.mjs';
 import patchBug from '../api/bug/[id].mjs';
@@ -23,6 +25,8 @@ beforeEach(() => {
   process.env.PUBLISH_KEY = PUBLISH_KEY;
   store = memoryStore();
   setStore(store);
+  setDb(null);           // these tests cover the key-value path; a DATABASE_URL in the shell must not leak in
+  setPhotoStore(null);
 });
 
 const req = (path, { method = 'GET', body, key, headers = {} } = {}) =>
@@ -369,7 +373,7 @@ test('without a store every data route answers 503, and auth is still checked fi
   assert.equal((await upload(jpeg(), null)).status, 403);
   assert.equal((await upload(jpeg())).status, 503);
   const h = await json(await health(req('/api/health')));
-  assert.deepEqual(h.body, { ok: false, store: 'none', storeOk: false, bugKey: true, publishKey: true });
+  assert.deepEqual(h.body, { ok: false, store: 'none', storeOk: false, menus: 'none', menusOk: false, bugKey: true, publishKey: true });
 });
 
 test('a store that throws gives 502, never an unhandled error', async () => {
@@ -389,5 +393,5 @@ test('a store that throws gives 502, never an unhandled error', async () => {
 
 test('health reports a working store', async () => {
   const h = await json(await health(req('/api/health')));
-  assert.deepEqual(h.body, { ok: true, store: 'memory', storeOk: true, bugKey: true, publishKey: true });
+  assert.deepEqual(h.body, { ok: true, store: 'memory', storeOk: true, menus: 'memory', menusOk: true, bugKey: true, publishKey: true });
 });

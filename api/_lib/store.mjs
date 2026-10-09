@@ -1,8 +1,14 @@
-// Storage for the API routes.
+// Key-value storage for the API routes: bug reports always, and published menus and photos when
+// there is no Postgres (api/_lib/menus.mjs).
 //
-// Production: Upstash Redis, spoken to over its REST API with plain fetch — no SDK, so the routes
-// run on Vercel's Edge runtime with zero dependencies. Values are stored as JSON strings, the same
-// wire format @upstash/redis uses, so records written by the previous deployment read back fine.
+// Production: the `kv` table in Neon Postgres (db/schema.sql; also created on first use), through
+// api/_lib/db.mjs. Values are kept as the exact JSON text that was written (text, not jsonb: jsonb
+// reorders object keys), the format the old Upstash store used, so records copied across by
+// `npm run db:import-upstash` read back unchanged. Postgres has no TTL, so each row carries its
+// expiry and every read ignores expired rows.
+//
+// Without DATABASE_URL, Upstash Redis is still used if its env vars are set: it's the deployment
+// this one replaces, and the source the import script copies from.
 //
 // Local dev and tests inject their own store with setStore() (dev/server.mjs uses a JSON file,
 // tests use memoryStore()). Nothing in this file touches the filesystem: the Edge runtime has none.
@@ -11,6 +17,8 @@
 //   get(key) -> value|null     mget(keys) -> [value|null]     set(key, value, {ex}) -> void
 //   del(key) -> void            keys(prefix) -> [key]           (+ a `kind` label for /api/health)
 
+import { getDb } from './db.mjs';
+
 const env = (name) => globalThis.process?.env?.[name] || '';
 
 let injected = null;
@@ -18,9 +26,14 @@ let cached = null;
 
 export function setStore(store) { injected = store; }
 
-// Vercel's Upstash integration has shipped under two naming schemes; accept either pair.
 export function getStore() {
   if (injected) return injected;
+  const db = getDb();
+  if (db) {
+    if (!cached || cached.db !== db) cached = { db, store: pgKvStore(db.query) };
+    return cached.store;
+  }
+  // Vercel's Upstash integration has shipped under two naming schemes; accept either pair.
   const url = env('KV_REST_API_URL') || env('UPSTASH_REDIS_REST_URL');
   const token = env('KV_REST_API_TOKEN') || env('UPSTASH_REDIS_REST_TOKEN');
   if (!url || !token) return null;
@@ -32,6 +45,52 @@ const parse = (v) => {
   if (v == null) return null;
   try { return JSON.parse(v); } catch { return v; }
 };
+
+// expires_at is milliseconds since the epoch, or null for never. Expired rows are ignored by every
+// read and deleted when their prefix is listed.
+const KV_SCHEMA = 'CREATE TABLE IF NOT EXISTS kv (key text PRIMARY KEY, value text NOT NULL, expires_at bigint)';
+const LIVE = '(expires_at IS NULL OR expires_at > $2)';
+
+export function pgKvStore(query, { now = () => Date.now() } = {}) {
+  let ready = null;
+  async function q(text, params) {
+    try { return await query(text, params); }
+    catch (e) {
+      if (e?.code !== '42P01') throw e;   // undefined_table: a database `npm run db:migrate` hasn't seen yet
+      ready ||= query(KV_SCHEMA).catch((err) => { ready = null; throw err; });
+      await ready;
+      return query(text, params);
+    }
+  }
+  return {
+    kind: 'postgres',
+    get: async (key) => {
+      const rows = await q(`SELECT value FROM kv WHERE key = $1 AND ${LIVE}`, [key, now()]);
+      return rows.length ? parse(rows[0].value) : null;
+    },
+    // in batches: a bug report can carry a ~900KB screenshot
+    mget: async (keys) => {
+      const found = new Map();
+      for (let i = 0; i < keys.length; i += 10) {
+        const rows = await q(`SELECT key, value FROM kv WHERE key = ANY($1) AND ${LIVE}`, [keys.slice(i, i + 10), now()]);
+        for (const r of rows) found.set(r.key, parse(r.value));
+      }
+      return keys.map((k) => (found.has(k) ? found.get(k) : null));
+    },
+    set: async (key, value, { ex } = {}) => {
+      await q('INSERT INTO kv (key, value, expires_at) VALUES ($1, $2, $3) ' +
+        'ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at',
+        [key, JSON.stringify(value), ex ? now() + ex * 1000 : null]);
+    },
+    del: async (key) => { await q('DELETE FROM kv WHERE key = $1', [key]); },
+    // starts_with, not LIKE: the prefixes contain '_', which LIKE reads as a wildcard
+    keys: async (prefix) => {
+      await q('DELETE FROM kv WHERE starts_with(key, $1) AND expires_at <= $2', [prefix, now()]);
+      const rows = await q(`SELECT key FROM kv WHERE starts_with(key, $1) AND ${LIVE}`, [prefix, now()]);
+      return rows.map((r) => r.key);
+    },
+  };
+}
 
 export function upstashStore(url, token, fetchImpl = (...a) => fetch(...a)) {
   const base = url.replace(/\/+$/, '');
@@ -48,6 +107,9 @@ export function upstashStore(url, token, fetchImpl = (...a) => fetch(...a)) {
   }
   return {
     kind: 'upstash',
+    // seconds left before `key` expires, or null if it never does (Redis: -1 none, -2 missing).
+    // The import script uses it so a copied bug report keeps its expiry.
+    ttl: async (key) => { const s = await cmd('TTL', key); return s >= 0 ? s : null; },
     get: async (key) => parse(await cmd('GET', key)),
     // in batches: a bug report can carry a ~900KB screenshot, and one MGET of every report at once
     // could outgrow a single Upstash response

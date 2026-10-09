@@ -1,9 +1,16 @@
-// GET /api/health — is the backend wired up? Which store is in use, can it be reached, and are the
-// two keys set. Never reveals the keys themselves or the store's URL.
+// GET /api/health — is the backend wired up? Never reveals the keys themselves or any URL.
+//   store / storeOk   the key-value store bug reports live in (Upstash in production)
+//   menus / menusOk   where published menus and drink photos live: 'postgres' when DATABASE_URL is
+//                     set, otherwise the same key-value store
+//   schema            Postgres only: are the tables there (npm run db:migrate)
+//   bugKey / publishKey  are the two keys set
 import { J, preflight } from './_lib/http.mjs';
 import { getStore } from './_lib/store.mjs';
+import { getMenus } from './_lib/menus.mjs';
 
 export const config = { runtime: 'edge' };
+
+const why = (e) => String(e?.message || e).slice(0, 200);
 
 export default async function handler(req) {
   if (req.method === 'OPTIONS') return preflight();
@@ -13,13 +20,29 @@ export default async function handler(req) {
   const store = getStore();
   let storeOk = false, storeError;
   if (store) {
-    try { await store.get('health_probe'); storeOk = true; } catch (e) { storeError = String(e?.message || e).slice(0, 200); }
+    try { await store.get('health_probe'); storeOk = true; } catch (e) { storeError = why(e); }
+  }
+  const menus = getMenus();
+  let menusOk = false, menusError, schema;
+  if (menus) {
+    try {
+      if (menus.schemaOk) {
+        schema = await menus.schemaOk();
+        if (!schema) menusError = 'the database has no tables yet — run npm run db:migrate';
+      }
+      else await menus.current('capiche');
+      menusOk = schema !== false;
+    } catch (e) { menusError = why(e); }
   }
   return J({
-    ok: storeOk,
+    ok: storeOk && menusOk,
     store: store ? store.kind : 'none',
     storeOk,
     ...(storeError ? { storeError } : {}),
+    menus: menus ? menus.kind : 'none',
+    menusOk,
+    ...(schema !== undefined ? { schema } : {}),
+    ...(menusError ? { menusError } : {}),
     bugKey: !!env.BUG_KEY,
     publishKey: !!env.PUBLISH_KEY,
   });

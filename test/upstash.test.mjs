@@ -4,6 +4,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { upstashStore, getStore, setStore } from '../api/_lib/store.mjs';
+import { setDb } from '../api/_lib/db.mjs';
 
 const TOKEN = 'upstash-token';
 const db = new Map();   // key -> { v, exp }
@@ -90,8 +91,9 @@ test('errors surface as exceptions (the routes turn them into 502)', async () =>
   await assert.rejects(upstashStore('http://127.0.0.1:1/', TOKEN).get('x'));
 });
 
-test('getStore() picks up either env var naming scheme', () => {
+test('without Postgres, getStore() picks up either Upstash env var naming scheme', () => {
   setStore(null);
+  setDb(null);   // DATABASE_URL takes precedence; this is the no-Postgres fallback
   for (const k of ['KV_REST_API_URL', 'KV_REST_API_TOKEN', 'UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN']) delete process.env[k];
   assert.equal(getStore(), null);
   process.env.UPSTASH_REDIS_REST_URL = url; process.env.UPSTASH_REDIS_REST_TOKEN = TOKEN;
@@ -100,4 +102,5 @@ test('getStore() picks up either env var naming scheme', () => {
   process.env.KV_REST_API_URL = url; process.env.KV_REST_API_TOKEN = TOKEN;
   assert.equal(getStore()?.kind, 'upstash');
   delete process.env.KV_REST_API_URL; delete process.env.KV_REST_API_TOKEN;
+  setDb(undefined);
 });
