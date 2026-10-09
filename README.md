@@ -4,13 +4,12 @@ Bookends' menu-editor site: the Bookends landing page, the passphrase-gated edit
 editors, the bug-report queue and the secret-menu page, plus the API behind them. A from-scratch
 rebuild of <https://chucky-chi.vercel.app>, built from the UI kit in `../menu-editor`.
 
-**Status:** the site and backend are complete. **Capiche, Aiko, Aiko drinks, Capiche Surat, Capiche
-Ahmedabad and Beshak have their menus** and are fully editable (see [The Capiche menu](#the-capiche-menu),
-[The Aiko menu](#the-aiko-menu), [The Aiko drinks menu](#the-aiko-drinks-menu),
+**Status:** the site and backend are complete, and **all seven editors have their menus** and are
+fully editable (see [The Capiche menu](#the-capiche-menu), [The Aiko menu](#the-aiko-menu),
+[The Churn'd menu](#the-churnd-menu), [The Aiko drinks menu](#the-aiko-drinks-menu),
 [The Capiche Surat drinks menu](#the-capiche-surat-drinks-menu),
 [The Capiche Ahmedabad drinks menu](#the-capiche-ahmedabad-drinks-menu) and
-[The Beshak menu](#the-beshak-menu)). The other editors don't have theirs yet: they show the full
-chrome with an empty editing surface, and Export, Publish, Full Preview and Personalise stay disabled.
+[The Beshak menu](#the-beshak-menu)).
 
 ## Run it locally
 
@@ -287,6 +286,37 @@ to the price instead of breaking early.
   - Everything loads and publishes through MenuState.
 - Aiko's names never take a second line, and its markers don't feed the layout plan, so Capiche's
   marker-cache fix doesn't apply here.
+
+## The Churn'd menu
+
+`public/churnd/` holds `churnd.pdf`, `fieldmap.json`, the dictionaries, `engine.js` and
+`start-state.json`. Churn'd is a **2-up sheet**: a cover page and a menu page, each printed twice side
+by side to be cut in half. Every flavour's name and prices are drawn twice (x ≈ 19.5 and x ≈ 440.3),
+so the fieldmap gives each one two spans and every edit lands in both copies. The menu is a name plus
+up to three prices per row (SMALL / MEDIUM / 500GM) in four sections: ICE CREAM, SORBET, ICE CREAM
+CANNOLI and ICE CREAM MOCHI. The **Menu** tab is PDF page 2 (`pages: [1, 0]` in `brands.js`); the cover
+has nothing to edit.
+
+- **Where it came from.** The PDF, fieldmap and dictionaries are the old repo's
+  `deploy/public/churnd/` files, byte for byte what chucky-chi.vercel.app served. The engine is the
+  script of the old site's live page (its `index.html` with the QR tool and edit memory built in), with
+  the usual `chucky-2` changes: MenuState loads and publishes, the edit memory's resume bar and
+  `rebase`, bars instead of `alert()`, and the shell's home link and greeting.
+- **The current menu** is `Churnd_Menu (1).pdf` (sent on 9 Oct 2026): `churnd.pdf` with the prices the
+  old site published on 22 Sep (ice cream and sorbet 193 / 379 / 1199, cannoli 379, mochi 170). That is
+  `start-state.json`, and the editor rebuilds that file **byte for byte**. With no edits it exports
+  `churnd.pdf` byte for byte.
+- **Every letter and digit.** Names are AOMonoBold and prices AOMonoRegular, so the full fonts load
+  here too (`assets/js/fullfonts.js`): a flavour can now be called QUINCE or MANGO XL 7. The subset
+  had no Q, X or most digits.
+- **Fixed: added items went in the wrong place.** Each section's add anchor (`add.last_y`) was two rows
+  low (one for MOCHI), left over from before MANGO CREAM and MANGO DOLLY were taken out of the artwork:
+  an added ice cream landed inside SORBET, and an added mochi below the footer. Each anchor is now its
+  section's last row.
+- **Fixed: nothing stopped the page overflowing.** An added item pushes every row under it, footer
+  included, one row down (a removal pulls them up). The footer is only 36pt from the bottom edge, so
+  the sheet has room for one more row than it has now. "+ Add item" and "Restore" say when the page is
+  full, and Export pauses if a loaded menu ever overflows (`rowsSpare` in `engine.js`).
 
 ## The Aiko drinks menu
 

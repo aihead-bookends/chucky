@@ -17,8 +17,8 @@ window.CHUCKY_BRANDS = {
     tabs: ['Page 1', 'Page 2'], search: 'Search items…', boot: 'Warming up the kitchen…', personalise: true,
   },
   churnd: {
-    mem: 'churnd', name: "Churn'd", text: { label: "Churn'd", cls: 'churnd' }, tag: 'Menu Editor',
-    tabs: ['Menu', 'Cover'], search: 'Search flavors…', boot: 'Scooping…',
+    mem: 'churnd', name: "Churn'd", text: { label: "Churn'd", cls: 'churnd' }, tag: 'Menu Editor', menu: true,
+    tabs: ['Menu', 'Cover'], pages: [1, 0], search: 'Search flavors…', boot: 'Scooping…',
   },
   beshak: {
     mem: 'beshak', name: 'Beshak', text: { label: 'BESHAK', cls: 'beshak' }, tag: 'Menu Editor', menu: true,

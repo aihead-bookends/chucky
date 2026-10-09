@@ -161,10 +161,19 @@ test('an editor with a menu has its engine, PDF and fieldmap, and a starting sta
     const start = JSON.parse(fs.readFileSync(`${dir}/start-state.json`, 'utf8'));
     assert.equal(start.base, 'v' + fs.statSync(`${dir}/${pdf}`).size, `${id}: start-state base matches ${pdf}`);
     // the food editors list fields by id; the drinks editor lists pages of drinks, addressed
-    // "page:drink" (an edit adds ":name", ":desc", …)
+    // "page:drink" (an edit adds ":name", ":desc", …); Churn'd lists items by number, edited as
+    // "n<item>" (the name) and "p<item>_<column>" (a price), and removed by number
     const fm = JSON.parse(fs.readFileSync(`${dir}/fieldmap.json`, 'utf8'));
-    const ids = new Set(fm.fields ? fm.fields.map((f) => f.id) : fm.pages.flatMap((p) => p.items.map((_, i) => `${p.page}:${i}`)));
-    const idOf = (k) => (fm.fields ? k : k.split(':').slice(0, 2).join(':'));
+    const ids = new Set(fm.fields ? fm.fields.map((f) => f.id)
+      : fm.items ? fm.items.map((it) => String(it.id))
+      : fm.pages.flatMap((p) => p.items.map((_, i) => `${p.page}:${i}`)));
+    const idOf = (k) => (fm.fields ? k
+      : fm.items ? String(k).replace(/^[np](\d+)(_\d+)?$/, '$1')
+      : k.split(':').slice(0, 2).join(':'));
+    if (fm.items) for (const k of Object.keys(start.state.edits || {})) {
+      const m = /^p(\d+)_(\d+)$/.exec(k);
+      if (m) assert.ok(+m[2] < fm.items[+m[1]].prices.length, `${id}: start-state edits price column ${k}, which item ${m[1]} doesn't have`);
+    }
     const s = start.state;
     for (const k of [...Object.keys(s.edits || {}), ...(s.removed || []), ...Object.keys(s.markerEdits || {})]) {
       assert.ok(ids.has(idOf(k)), `${id}: start-state refers to field ${k}, which the fieldmap doesn't have`);
