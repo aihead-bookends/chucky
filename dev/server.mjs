@@ -1,11 +1,13 @@
 // Local stand-in for Vercel: serves public/ and routes /api/* to the same handler files Vercel deploys
 // (filesystem routing, [param] segments included), so what runs here is what ships.
 //
-//   npm run dev              http://localhost:3002, and every device on the same Wi-Fi (it prints the address)
+//   npm run dev              http://localhost:3003, and every device on the same Wi-Fi (it prints the address)
 //   npm run dev:local        this computer only
 //   npm run dev -- --port 4000
 //
-// Storage: a JSON file in .data/ — unless Upstash env vars are set, in which case the real database.
+// Storage: Postgres when DATABASE_URL is set (in .env or the shell): published menus, photos and bug
+// reports, through the TCP driver in dev/pg.mjs (photo bytes go to Vercel Blob too if
+// BLOB_READ_WRITE_TOKEN is set). Otherwise a JSON file in .data/, or Upstash if its env vars are set.
 // Keys: read from .env; any that are missing get a printed local-only default.
 import http from 'node:http';
 import os from 'node:os';
@@ -14,6 +16,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setStore, getStore } from '../api/_lib/store.mjs';
 import { fileStore } from './filestore.mjs';
+import { setDb, getDb } from '../api/_lib/db.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC = path.join(ROOT, 'public');
@@ -142,7 +145,7 @@ export function createDevServer() {
   });
 }
 
-function loadDotEnv(file) {
+export function loadDotEnv(file) {
   let text;
   try { text = fs.readFileSync(file, 'utf8'); } catch { return; }
   for (const line of text.split(/\r?\n/)) {
@@ -152,9 +155,9 @@ function loadDotEnv(file) {
   }
 }
 
-function main() {
+async function main() {
   const arg = (name, dflt) => { const i = process.argv.indexOf('--' + name); return i > 0 ? process.argv[i + 1] : dflt; };
-  const port = Number(arg('port', process.env.PORT || 3002));
+  const port = Number(arg('port', process.env.PORT || 3003));
   // on the network by default, so phones on the same Wi-Fi can open it; --local for this computer only
   const host = process.argv.includes('--local') ? '127.0.0.1' : arg('host', process.env.HOST || '0.0.0.0');
 
@@ -165,6 +168,12 @@ function main() {
   }
   // --data <folder> keeps a separate store (tests use this, so they never touch your .data)
   const dataDir = path.resolve(ROOT, arg('data', '.data'));
+  const dbUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  if (dbUrl) {
+    // imported only when used, so the file store still works without `npm install`
+    const { pgAdapter } = await import('./pg.mjs');
+    setDb(pgAdapter(dbUrl));
+  }
   if (!getStore()) setStore(fileStore(path.join(dataDir, 'store.json')));
 
   LOG = true;
@@ -190,7 +199,8 @@ function main() {
       console.log('    other devices:   not reachable — this address works on this computer only.');
       console.log('                     For phones on the same Wi-Fi, run:  npm run dev');
     }
-    console.log(`  storage: ${getStore().kind === 'file' ? path.relative(ROOT, path.join(dataDir, 'store.json')) + ' (local file)' : 'Upstash Redis (from env)'}`);
+    const kind = getStore().kind;
+    console.log(`  storage: ${getDb() ? 'Postgres (DATABASE_URL)' + (process.env.BLOB_READ_WRITE_TOKEN ? ', photos in Vercel Blob' : '') : kind === 'file' ? path.relative(ROOT, path.join(dataDir, 'store.json')) + ' (local file)' : 'Upstash Redis (from env)'}`);
     console.log(`  publish key: ${process.env.PUBLISH_KEY}   (the Publish button asks for it once on each device)`);
     if (defaulted.length) console.log(`  local-only keys (set real ones in .env): ${defaulted.join('  ')}`);
     console.log('\n  Requests (publish, load, bug reports) appear below:\n');

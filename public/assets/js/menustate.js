@@ -279,10 +279,14 @@ window.MenuState = (function () {
     try { const r = await getJSON(API + encodeURIComponent(editor) + '?history=1'); if (!r.ok) throw new Error(r.body && r.body.error); list = r.body.versions; }
     catch (e) { panel.querySelector('.vrow').textContent = 'Couldn’t load versions (' + reason(e) + ').'; return; }
     if (!list.length) { panel.querySelector('.vrow').textContent = 'Nothing has been published yet.'; return; }
+    // every published version is kept (Postgres never prunes them); the panel lists the newest
+    const SHOW = 50, all = list.length;
+    list = list.slice(0, SHOW);
     panel.innerHTML = '<h4>Published versions</h4>' + list.map((v) =>
       '<div class="vrow" data-t="' + v.t + '"><div class="vl"><div>' + esc(when(v.t)) + (v.current ? ' <span class="vcur">live</span>' : '') + (v.base !== base ? ' <span class="vold">older PDF</span>' : '') + '</div>'
       + '<div class="vm">' + (v.drinks != null ? v.drinks + ' drinks' : v.edits + ' edits · ' + v.removed + ' removed · ' + v.added + ' added') + '</div></div>'
       + (v.base === base && v.t !== loadedT ? '<button type="button" data-load="' + v.t + '">Load</button>' : '') + '</div>').join('')
+      + (all > SHOW ? '<p class="vnote">Showing the newest ' + SHOW + ' of ' + all + ' versions. Every one is kept.</p>' : '')
       + '<p class="vnote">Loading a version puts it in the editor. Nobody else sees it until you Publish.</p>';
     panel.querySelectorAll('[data-load]').forEach((b) => b.addEventListener('click', () => loadVersion(+b.dataset.load)));
   }

@@ -5,6 +5,8 @@
 //
 // Publish: the edit overlay an editor applies on top of its pristine menu, stored per editor so every
 // device that opens the editor loads the last-published menu. It stays until the next Publish.
+// Where it is stored is api/_lib/menus.mjs's business: Postgres when DATABASE_URL is set (every
+// version kept forever, every edited value as its own row), otherwise the key-value store.
 //
 // Reading is public on purpose — every device must see the current menu without a secret, and the
 // state holds the same dish names and prices the editor already serves. Writing changes what
@@ -12,66 +14,36 @@
 // key then exposes bug reports, never the live menu.
 //
 // NO PUBLISH IS EVER SILENTLY LOST. The old Chucky lost published menus three ways, and each has a
-// guard here:
+// guard:
 //  - a stale copy overwrote a newer one (a tab open since before someone else published, or old
-//    unsaved edits resumed). Every publish now names the version it started from (`prev`, the `t` it
+//    unsaved edits resumed). Every publish names the version it started from (`prev`, the `t` it
 //    loaded, or null if nothing was published). If that is no longer the current version the publish
 //    is refused with 409, and the editor tells the person to load the latest first.
-//  - nothing could be recovered. The version a publish replaces is archived (menu_hist_<editor>_<t>),
-//    the newest HIST_KEEP are kept for HIST_TTL_S, and any of them can be read back and re-published.
-//  - "Published" was shown for a write nobody checked. The record is read back after writing, and
-//    the publish only succeeds if what is stored is exactly what was sent (a lost race shows up here).
-// Compare-then-write is not atomic across two requests, but two publishes landing within the same few
-// milliseconds is the only gap, and the read-back check reports that loser as a failure.
+//  - nothing could be recovered. Every replaced version is kept, listed by ?history=1, readable by
+//    ?v=, and can be re-published.
+//  - "Published" was shown for a write nobody checked. Postgres reports success only once the
+//    publish's transaction has committed; the key-value store reads the record back.
 import { J, preflight, notConfigured, authed, readBody } from '../_lib/http.mjs';
 import { MAX_STATE } from '../_lib/bugs.mjs';
-import { getStore } from '../_lib/store.mjs';
+import { getMenus, Conflict, Unconfirmed } from '../_lib/menus.mjs';
+export { stateKey, histPrefix, HIST_KEEP, HIST_TTL_S } from '../_lib/menus.mjs';
 
 export const config = { runtime: 'edge' };
 
 // The editors' own keys (the Aiko drinks editor lives at /drinks/ but publishes as 'aiko-drinks').
-// Checked before building a store key, so this route can't read or write arbitrary keys.
+// Checked before anything is looked up, so this route can't read or write anything else.
 export const EDITORS = new Set(['capiche', 'aiko', 'churnd', 'beshak', 'aiko-drinks', 'capiche-surat', 'capiche-ahm']);
-export const stateKey = (editor) => 'menu_state_' + editor;
-export const histPrefix = (editor) => 'menu_hist_' + editor + '_';
-export const HIST_KEEP = 50;
-export const HIST_TTL_S = 60 * 60 * 24 * 365;
 
-// how many items a state's list holds: a plain list, or (the drinks menus) one list per page
-const count = (v) => (Array.isArray(v) ? v.length : v && typeof v === 'object' ? Object.values(v).reduce((n, x) => n + count(x), 0) : 0);
-const summary = (rec, current) => {
-  const s = rec.state || {};
-  return {
-    t: rec.t, base: rec.base, current,
-    edits: Object.keys(s.edits || {}).length, removed: count(s.removed), added: count(s.added),
-    // the Aiko drinks menu keeps its whole list of drinks (bands; the soft drinks share one) instead of edits
-    ...(Array.isArray(s.bands) ? { drinks: s.bands.reduce((n, b) => n + (Array.isArray(b && b.lines) ? b.lines.length : 1), 0) } : {}),
-  };
-};
-
-async function getRoute(store, editor, url) {
-  const current = await store.get(stateKey(editor));
-  if (url.searchParams.get('history') === '1') {
-    const keys = await store.keys(histPrefix(editor));
-    const old = (await store.mget(keys)).filter((r) => r && typeof r.t === 'number');
-    const versions = [...(current ? [summary(current, true)] : []), ...old.map((r) => summary(r, false))]
-      .sort((a, b) => b.t - a.t);
-    return J({ ok: true, versions });
-  }
+async function getRoute(menus, editor, url) {
+  if (url.searchParams.get('history') === '1') return J({ ok: true, versions: await menus.history(editor) });
   const v = url.searchParams.get('v');
   if (v !== null) {
     if (!/^\d{1,16}$/.test(v)) return J({ ok: false, error: 'bad version' }, 400);
-    const rec = current && String(current.t) === v ? current : await store.get(histPrefix(editor) + v);
+    const rec = await menus.version(editor, Number(v));
     return rec ? J(rec) : J({ ok: false, error: 'no such version' }, 404);
   }
+  const current = await menus.current(editor);
   return current ? J(current) : J({ ok: false, error: 'nothing published' }, 404);
-}
-
-async function prune(store, editor) {
-  const keys = await store.keys(histPrefix(editor));
-  if (keys.length <= HIST_KEEP) return;
-  const byAge = keys.sort((a, b) => Number(b.slice(b.lastIndexOf('_') + 1)) - Number(a.slice(a.lastIndexOf('_') + 1)));
-  for (const k of byAge.slice(HIST_KEEP)) await store.del(k);
 }
 
 async function postRoute(req, url, editor) {
@@ -86,26 +58,15 @@ async function postRoute(req, url, editor) {
   if (!('prev' in body) || !(prev === null || Number.isFinite(prev))) {
     return J({ ok: false, error: 'prev is required: the t of the version this edit started from, or null if none was published' }, 400);
   }
-  const store = getStore();
-  if (!store) return notConfigured();
+  const menus = getMenus();
+  if (!menus) return notConfigured();
 
   try {
-    const current = await store.get(stateKey(editor));
-    const curT = current && typeof current.t === 'number' ? current.t : null;
-    if (prev !== curT) {
-      return J({ ok: false, error: 'conflict', current: curT === null ? null : { t: curT, base: current.base } }, 409);
-    }
-    // strictly increasing, so a version is never mistaken for the one before it (clock skew)
-    const rec = { editor, t: Math.max(Date.now(), (curT || 0) + 1), base: String(body.base || '').slice(0, 200), state };
-    if (current) await store.set(histPrefix(editor) + curT, current, { ex: HIST_TTL_S });
-    await store.set(stateKey(editor), rec);
-    const check = await store.get(stateKey(editor));
-    if (!check || check.t !== rec.t || JSON.stringify(check.state) !== JSON.stringify(rec.state)) {
-      return J({ ok: false, error: 'publish could not be confirmed — another publish may have landed at the same moment; reload and check' }, 502);
-    }
-    try { await prune(store, editor); } catch { /* history housekeeping never fails a publish */ }
-    return J({ ok: true, t: rec.t });
-  } catch {
+    const { t } = await menus.publish(editor, { prev, base: String(body.base || '').slice(0, 200), state });
+    return J({ ok: true, t });
+  } catch (e) {
+    if (e instanceof Conflict) return J({ ok: false, error: 'conflict', current: e.current }, 409);
+    if (e instanceof Unconfirmed) return J({ ok: false, error: e.message }, 502);
     return J({ ok: false, error: 'store unavailable' }, 502);
   }
 }
@@ -118,9 +79,9 @@ export default async function handler(req) {
   if (!EDITORS.has(editor)) return J({ ok: false, error: 'unknown editor' }, 404);
 
   if (req.method === 'GET') {
-    const store = getStore();
-    if (!store) return notConfigured();
-    try { return await getRoute(store, editor, url); } catch { return J({ ok: false, error: 'store unavailable' }, 502); }
+    const menus = getMenus();
+    if (!menus) return notConfigured();
+    try { return await getRoute(menus, editor, url); } catch { return J({ ok: false, error: 'store unavailable' }, 502); }
   }
   if (req.method === 'POST') return postRoute(req, url, editor);
   return J({ ok: false, error: 'method not allowed' }, 405);

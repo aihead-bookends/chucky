@@ -2,10 +2,11 @@
 //
 // Stores a drink photo and returns its id, the SHA-256 of the bytes (see _lib/photos.mjs). The
 // editor uploads a menu's new photos just before it publishes the menu that names them, so it needs
-// the same key as publishing. Uploading a photo that is already stored changes nothing.
+// the same key as publishing. Uploading a photo that is already stored changes nothing. Where the
+// bytes go is api/_lib/menus.mjs's business: Vercel Blob with a Postgres record in production.
 import { J, preflight, notConfigured, authed, readBytes } from './_lib/http.mjs';
-import { MAX_PHOTO, photoKey, sniffImage, sha256Hex, toBase64 } from './_lib/photos.mjs';
-import { getStore } from './_lib/store.mjs';
+import { MAX_PHOTO, sniffImage, sha256Hex } from './_lib/photos.mjs';
+import { getMenus, Unconfirmed } from './_lib/menus.mjs';
 
 export const config = { runtime: 'edge' };
 
@@ -19,21 +20,15 @@ export default async function handler(req) {
   if (bytes === null) return J({ ok: false, error: 'photo too large — the limit is ' + Math.round(MAX_PHOTO / 1024) + ' KB' }, 413);
   const type = sniffImage(bytes);
   if (!type) return J({ ok: false, error: 'not a JPEG or PNG image' }, 415);
-  const store = getStore();
-  if (!store) return notConfigured();
+  const menus = getMenus();
+  if (!menus) return notConfigured();
 
   const id = await sha256Hex(bytes);
-  const b64 = toBase64(bytes);
   try {
-    const have = await store.get(photoKey(id));
-    if (!have || have.b64 !== b64) {
-      await store.set(photoKey(id), { type, size: bytes.length, t: Date.now(), b64 });
-      // read back: the menu about to be published points at this photo, so it has to be there
-      const check = await store.get(photoKey(id));
-      if (!check || check.b64 !== b64) return J({ ok: false, error: 'the photo could not be confirmed as saved' }, 502);
-    }
-  } catch {
-    return J({ ok: false, error: 'store unavailable' }, 502);
+    // confirmed before answering: the menu about to be published points at this photo
+    await menus.putPhoto(id, type, bytes);
+  } catch (e) {
+    return J({ ok: false, error: e instanceof Unconfirmed ? e.message : 'store unavailable' }, 502);
   }
   return J({ ok: true, id, size: bytes.length });
 }

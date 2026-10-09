@@ -15,47 +15,83 @@ chrome with an empty editing surface, and Export, Publish, Full Preview and Pers
 ## Run it locally
 
 ```bash
-npm run dev          # http://localhost:3002, and phones on the same Wi-Fi (it prints the address)
+npm run dev          # http://localhost:3003, and phones on the same Wi-Fi (it prints the address)
 npm run dev:local    # this computer only
-npm test             # 38 tests: API routes, publish safety, Upstash client, every page over HTTP, the Capiche files
+npm test             # API routes, publish safety, the Postgres store, every page over HTTP, the menu files
 npm run check -- <url> # check a running site end to end, without changing any menu (see Deploy)
+npm run db:migrate   # create the Postgres tables (db/schema.sql) in DATABASE_URL; safe to re-run
 ```
 
-Needs Node 20+ and nothing else: there are no dependencies, so there's no `npm install`.
+Needs Node 20+. Run `npm install` once: it installs the Postgres and Blob drivers the API uses.
+The Postgres tests in `test/db.test.mjs` run only when `TEST_DATABASE_URL` points at a Postgres
+they may write to (each run uses its own schema and drops it); without it they are skipped.
 
-**Opening it on a phone or another computer.** `http://127.0.0.1:3002` and `localhost` only ever
+**Opening it on a phone or another computer.** `http://127.0.0.1:3003` and `localhost` only ever
 mean "this same device", so they can't work anywhere else. `npm run dev` prints the address other
-devices should use (for example `http://172.16.46.203:3002/ (Wi-Fi)`), and
+devices should use (for example `http://172.16.46.203:3003/ (Wi-Fi)`), and
 it works for any device on the same Wi-Fi. If a network blocks devices from reaching each other,
 which some office and guest Wi-Fi does, deploy to Vercel instead. Without https, browsers turn off
 their built-in hashing, so the passphrase check falls back to its own SHA-256 (`sha256Hex` in
 `site.js`, checked against Node's in the tests).
 
-The dev server serves `public/` and runs the same `api/` handlers Vercel deploys. It stores data in
-`.data/store.json`. Keys come from `.env` (copy `.env.example`). If a key isn't set there, the server
-uses a local-only default (`dev-bug-key` / `dev-publish-key`) and prints it when it starts.
+The dev server serves `public/` and runs the same `api/` handlers Vercel deploys. Settings come from
+`.env` (copy `.env.example`):
+- **With `DATABASE_URL`** (a local Postgres, e.g. `postgres://postgres:<password>@localhost:5432/chucky`;
+  run `npm run db:migrate` once): menus, photos and bug reports go to Postgres, exactly as in
+  production. Photo bytes stay in Postgres unless `BLOB_READ_WRITE_TOKEN` is set too.
+- **Without it:** everything goes to `.data/store.json`, with no setup at all.
+
+If a key isn't set, the server uses a local-only default (`dev-bug-key` / `dev-publish-key`) and
+prints it when it starts.
 
 ## Deploy (Vercel)
 
 1. Import this folder as a Vercel project. No framework and no build command are needed:
    `vercel.json` serves `public/`, and `api/` becomes Edge Functions.
-2. **Storage → Upstash Redis.** The integration adds `KV_REST_API_URL` / `KV_REST_API_TOKEN`
-   (the `UPSTASH_REDIS_REST_*` names work too).
-3. **Environment variables:** `BUG_KEY` (opens `/bugs/`) and `PUBLISH_KEY` (lets editors publish).
+2. **Storage → Neon** (Postgres, from the Vercel Marketplace). It adds `DATABASE_URL`.
+3. **Storage → Blob.** It adds `BLOB_READ_WRITE_TOKEN`. Drink photos go here. If you create the
+   store as private, also set `BLOB_ACCESS=private`; every photo is served through `/api/photo/:id`
+   either way.
+4. **Create the tables.** Copy the Neon `DATABASE_URL` into your local `.env` and run
+   `npm run db:migrate`. It's safe to run again after any change to `db/schema.sql`.
+5. **Environment variables:** `BUG_KEY` (opens `/bugs/`) and `PUBLISH_KEY` (lets editors publish).
    Use two different values.
-4. Deploy, then check it from your computer:
+6. Deploy, then check it from your computer:
    ```bash
    npm run check -- https://your-site.vercel.app --publish-key <PUBLISH_KEY> --bug-key <BUG_KEY>
    ```
-   It checks every page, the Capiche menu files, that storage is **Upstash** and reachable, both
-   keys, every published menu and its history, and that publishing is protected. It ends with
-   "✔ Everything checked is working". It never changes a menu: its publish test names an
-   out-of-date starting version on purpose, so a healthy server refuses it with 409. Run it again
-   after any change to the deployment.
+   It checks every page, the Capiche menu files, that menus and bug reports are stored in
+   **Postgres** and the tables are there, both keys, every published menu and its history, and that
+   publishing is protected. It ends with "✔ Everything checked is working". It never changes a
+   menu: its publish test names an out-of-date starting version on purpose, so a healthy server
+   refuses it with 409. Run it again after any change to the deployment.
 
-To keep the data from the current chucky-chi deployment, connect the same Upstash database. Key names
-(`bug_*`, `menu_state_<editor>`) and the JSON format are unchanged, so existing bug reports and
-published menus carry over.
+**Bringing over the data from the Upstash deployment.** Put the old store's `KV_REST_API_URL` and
+`KV_REST_API_TOKEN` in `.env` next to the Neon `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN`, then:
+```bash
+npm run db:import-upstash -- --dry-run   # counts what it would copy, writes nothing
+npm run db:import-upstash
+```
+It copies every published menu with its kept history (each version keeps its time, chained oldest
+to newest), every drink photo (to Blob, after checking the bytes match the id), and every bug report
+(with the time it had left). It's safe to run again: it copies only what's missing. Run it before
+anyone publishes on the new deployment; an editor that already has versions in Postgres is skipped.
+
+### What Postgres holds (`db/schema.sql`)
+
+| Table | One row per | Kept |
+|---|---|---|
+| `menu_versions` | Publish: `editor`, `t` (the version), `parent_t` (the version it was edited from), `base` (which PDF), `state` (the editor's whole state, exactly as published), `summary` | forever; the highest `t` is the live menu |
+| `menu_version_items` | editable value in a version: `path` (e.g. `edits/1:9`, `added/0/name`, `markerEdits/1:0`, `photos/1:3/id`, `bands/2/price`), `section`, `value` | with its version |
+| `photos` | drink photo: `id` (SHA-256), `type`, `size`, `url` (Vercel Blob); `bytes` only without Blob | forever |
+| `kv` | bug report (`bug_*` → the report), with `expires_at` | 45 days |
+
+`UNIQUE (editor, parent_t)` is the publish lock: two publishes edited from the same version can't
+both land, even at the same instant. Every value of every version can be followed over time, for
+example:
+```sql
+SELECT t, value FROM menu_version_items WHERE editor = 'capiche' AND path = 'edits/1:9' ORDER BY t;
+```
 
 ## Pages
 
@@ -84,7 +120,7 @@ Keys are sent as `Authorization: Bearer <key>`. `?k=<key>` is still accepted for
 | `POST /api/menu-state/:editor` | `PUBLISH_KEY` | Publish `{state, base, prev}` for every device. `prev` is the version the edit started from (`null` if none). If that's no longer current it answers 409 and writes nothing. The replaced version is kept. |
 | `POST /api/photo` | `PUBLISH_KEY` | Store a drink photo (the JPEG or PNG bytes, up to 600 KB) and answer `{id}`: the SHA-256 of the bytes. The editor calls it while publishing. The same photo twice is stored once. |
 | `GET /api/photo/:id` | public | A stored photo. An id always names the same image, so it may be cached for a year. |
-| `GET /api/health` | public | Which store is in use, whether it answers, and whether both keys are set. |
+| `GET /api/health` | public | Where menus and bug reports are stored, whether each answers, whether the Postgres tables exist, and whether both keys are set. |
 
 Editor keys: `capiche`, `aiko`, `churnd`, `beshak`, `aiko-drinks` (served at `/drinks/`),
 `capiche-surat`, `capiche-ahm`.
@@ -107,7 +143,9 @@ public/
   assets/js/site.js          tile tilt + passphrase check
   assets/brand/*.svg         Capiche / Aiko marks, drawn as CSS masks so they take the brand colour
 api/                         Vercel Edge Functions; _lib/ holds shared code and isn't routable
-dev/                         local dev server + file store, and check.mjs (not deployed)
+db/schema.sql                the Postgres tables (npm run db:migrate)
+dev/                         local dev server, file store, Postgres adapter (pg.mjs), check.mjs,
+                             db-migrate.mjs, db-import-upstash.mjs (not deployed)
 test/                        node --test
 ```
 
@@ -139,15 +177,16 @@ the causes:
 |---|---|
 | Publishing from an out-of-date copy | Every publish names the version it started from. If someone else has published since, the server refuses it (409) and writes nothing. The editor explains, and **Load the latest menu** fetches it. Your own edits go to History first. |
 | A publish that didn't really save | The server reads the menu back after writing and only reports success if it matches. |
-| No way back | Every replaced version is kept: the newest 50 per editor, for a year. Click the live chip to see them, **Load** one, then **Publish** it. |
+| No way back | Every published version is kept in Postgres, forever, with every edited value as its own row. Click the live chip to see them (the newest 50), **Load** one, then **Publish** it. Without Postgres (the dev file store), the newest 50 are kept for a year. |
 | The published menu fails to load | Retried 3 times. If it still fails, a red bar says so and **Publish is switched off**, so an old menu can't be published over the real one. |
 | A menu made for a different PDF | Not applied. A bar says why. Publishing over it asks first, and the old one stays in the versions. |
 | Old unsaved edits on a device | If they predate the latest publish, the resume bar says so and makes **Keep the published menu** the default. The old edits still go to History. |
 | Not knowing what's live | The chip beside Publish always says: **Live · 4:14 PM**, **Unpublished changes**, **Not published**, or **Not connected**. The device autosave chip says **Saved on this device**, never just "Saved". Closing the tab with unpublished changes asks first. |
 | A newer publish from another device | Picked up automatically when you come back to the tab (and every minute). If you have unpublished edits, a bar offers it instead of replacing them. |
 
-The last two edge cases: two publishes arriving within the same few milliseconds are not locked
-against each other, and the read-back check reports the one that lost. Photos and anything else a
+Two publishes arriving at the same instant: in Postgres, `UNIQUE (editor, parent_t)` lets exactly
+one land and the other gets the 409. (The key-value store used without Postgres can't lock, so its
+read-back check reports the one that lost.) Photos and anything else a
 future editor stores must go to the server, never only into the browser, or the drinks-editor
 problem comes back.
 
