@@ -11,10 +11,10 @@ import { flattenState } from '../api/_lib/menus.mjs';
 import { setDb } from '../api/_lib/db.mjs';
 import { setStore, memoryStore, getStore } from '../api/_lib/store.mjs';
 import { setPhotoStore } from '../api/_lib/photos.mjs';
-import menuState from '../api/menu-state/[editor].mjs';
-import postPhoto from '../api/photo.mjs';
-import getPhoto from '../api/photo/[id].mjs';
-import health from '../api/health.mjs';
+import { handler as menuState } from '../api/menu-state/[editor].mjs';
+import { handler as postPhoto } from '../api/photo.mjs';
+import { handler as getPhoto } from '../api/photo/[id].mjs';
+import { handler as health } from '../api/health.mjs';
 
 // ---------------- flattenState: one row per editable value ----------------
 

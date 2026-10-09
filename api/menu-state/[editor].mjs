@@ -28,8 +28,6 @@ import { MAX_STATE } from '../_lib/bugs.mjs';
 import { getMenus, Conflict, Unconfirmed } from '../_lib/menus.mjs';
 export { stateKey, histPrefix, HIST_KEEP, HIST_TTL_S } from '../_lib/menus.mjs';
 
-export const config = { runtime: 'edge' };
-
 // The editors' own keys (the Aiko drinks editor lives at /drinks/ but publishes as 'aiko-drinks').
 // Checked before anything is looked up, so this route can't read or write anything else.
 export const EDITORS = new Set(['capiche', 'aiko', 'churnd', 'beshak', 'aiko-drinks', 'capiche-surat', 'capiche-ahm']);
@@ -71,7 +69,7 @@ async function postRoute(req, url, editor) {
   }
 }
 
-export default async function handler(req) {
+export async function handler(req) {
   const url = new URL(req.url);
   if (req.method === 'OPTIONS') return preflight();
 
@@ -86,3 +84,6 @@ export default async function handler(req) {
   if (req.method === 'POST') return postRoute(req, url, editor);
   return J({ ok: false, error: 'method not allowed' }, 405);
 }
+
+// A Vercel Node.js function in the web-standard form: Request in, Response out.
+export default { fetch: handler };

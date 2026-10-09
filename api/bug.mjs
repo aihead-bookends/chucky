@@ -3,9 +3,7 @@ import { J, preflight, notConfigured, readBody } from './_lib/http.mjs';
 import { MAX_BODY, newRecord, putBug } from './_lib/bugs.mjs';
 import { getStore } from './_lib/store.mjs';
 
-export const config = { runtime: 'edge' };
-
-export default async function handler(req) {
+export async function handler(req) {
   if (req.method === 'OPTIONS') return preflight();
   if (req.method !== 'POST') return J({ ok: false, error: 'method not allowed' }, 405);
   const store = getStore();
@@ -22,3 +20,6 @@ export default async function handler(req) {
   try { await putBug(store, rec); } catch { return J({ ok: false, error: 'store unavailable' }, 502); }
   return J({ ok: true, id: rec.id });
 }
+
+// A Vercel Node.js function in the web-standard form: Request in, Response out.
+export default { fetch: handler };

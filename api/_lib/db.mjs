@@ -6,8 +6,9 @@
 //   db.kind                                   'postgres', for /api/health
 //
 // Production: Neon (added from the Vercel Marketplace, which sets DATABASE_URL), spoken to with
-// @neondatabase/serverless over HTTP. That driver runs on the Edge runtime the routes use, where a
-// TCP driver can't. Its `transaction()` sends every statement in one request, run as one transaction.
+// @neondatabase/serverless over HTTP: no connection to open or pool to keep, which suits functions
+// that start and stop on demand. Its `transaction()` sends every statement in one request, run as
+// one transaction.
 //
 // Local dev, the scripts in dev/ and the tests inject a TCP-backed adapter instead (pgAdapter in
 // dev/pg.mjs), because Neon's HTTP endpoint only exists for Neon databases, not a local Postgres.

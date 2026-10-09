@@ -8,11 +8,9 @@ import { J, preflight } from './_lib/http.mjs';
 import { getStore } from './_lib/store.mjs';
 import { getMenus } from './_lib/menus.mjs';
 
-export const config = { runtime: 'edge' };
-
 const why = (e) => String(e?.message || e).slice(0, 200);
 
-export default async function handler(req) {
+export async function handler(req) {
   if (req.method === 'OPTIONS') return preflight();
   if (req.method !== 'GET') return J({ ok: false, error: 'method not allowed' }, 405);
 
@@ -47,3 +45,6 @@ export default async function handler(req) {
     publishKey: !!env.PUBLISH_KEY,
   });
 }
+
+// A Vercel Node.js function in the web-standard form: Request in, Response out.
+export default { fetch: handler };

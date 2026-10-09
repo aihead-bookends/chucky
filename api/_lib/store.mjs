@@ -11,7 +11,7 @@
 // this one replaces, and the source the import script copies from.
 //
 // Local dev and tests inject their own store with setStore() (dev/server.mjs uses a JSON file,
-// tests use memoryStore()). Nothing in this file touches the filesystem: the Edge runtime has none.
+// tests use memoryStore()). Nothing in this file touches the filesystem: a deployed function's is read-only.
 //
 // Every store has the same five async methods:
 //   get(key) -> value|null     mget(keys) -> [value|null]     set(key, value, {ex}) -> void

@@ -47,7 +47,9 @@ prints it when it starts.
 ## Deploy (Vercel)
 
 1. Import this folder as a Vercel project. No framework and no build command are needed:
-   `vercel.json` serves `public/`, and `api/` becomes Edge Functions.
+   `vercel.json` serves `public/`, and each file in `api/` becomes a Node.js function (each exports
+   `default { fetch }`: a web Request in, a Response out). Not the Edge runtime: the Blob SDK needs
+   Node's networking modules, which Edge doesn't have.
 2. **Storage → Neon** (Postgres, from the Vercel Marketplace). It adds `DATABASE_URL`.
 3. **Storage → Blob.** It adds `BLOB_READ_WRITE_TOKEN`. Drink photos go here. If you create the
    store as private, also set `BLOB_ACCESS=private`; every photo is served through `/api/photo/:id`
@@ -142,7 +144,7 @@ public/
   assets/js/chucky.js        the mascot and his lines
   assets/js/site.js          tile tilt + passphrase check
   assets/brand/*.svg         Capiche / Aiko marks, drawn as CSS masks so they take the brand colour
-api/                         Vercel Edge Functions; _lib/ holds shared code and isn't routable
+api/                         Vercel Node.js functions; _lib/ holds shared code and isn't routable
 db/schema.sql                the Postgres tables (npm run db:migrate)
 dev/                         local dev server, file store, Postgres adapter (pg.mjs), check.mjs,
                              db-migrate.mjs, db-import-upstash.mjs (not deployed)

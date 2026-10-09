@@ -7,9 +7,7 @@ import { J, cors, preflight, notConfigured } from '../_lib/http.mjs';
 import { isPhotoId } from '../_lib/photos.mjs';
 import { getMenus } from '../_lib/menus.mjs';
 
-export const config = { runtime: 'edge' };
-
-export default async function handler(req) {
+export async function handler(req) {
   const url = new URL(req.url);
   if (req.method === 'OPTIONS') return preflight();
   if (req.method !== 'GET') return J({ ok: false, error: 'method not allowed' }, 405);
@@ -30,3 +28,6 @@ export default async function handler(req) {
     },
   });
 }
+
+// A Vercel Node.js function in the web-standard form: Request in, Response out.
+export default { fetch: handler };

@@ -54,7 +54,7 @@ function resolveApi(pathname) {
 const modules = new Map();
 const loadHandler = async (file) => {
   if (!modules.has(file)) modules.set(file, import(pathToFileURL(file).href));
-  return (await modules.get(file)).default;
+  return (await modules.get(file)).default.fetch;   // the same export Vercel calls
 };
 
 function readRequestBody(req) {
