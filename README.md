@@ -286,6 +286,24 @@ to the price instead of breaking early.
   - Everything loads and publishes through MenuState.
 - Aiko's names never take a second line, and its markers don't feed the layout plan, so Capiche's
   marker-cache fix doesn't apply here.
+- **New sections** ("+ Add a new section", e.g. Add Ons or Bao). A new section goes under the last
+  section of a column, in the free space above the legend: under MAINS on page 1 (room for about
+  three dishes). Page 2 and page 1's right column are full until dishes are removed. The heading is
+  set like the printed ones, a Geist word with the gold handwritten label beside it. Its dishes are
+  normal added dishes, except the description is optional, so a one-line add-on ("KIMCHI  150")
+  works. It moves with removals and longer descriptions above it. The Add button stops at the
+  legend, and if restoring a dish pushes a section into the legend, export is blocked until it
+  fits. Saved as `newSecs` in the menu's state (only written when there is one).
+- **Headings can use any letter.** The PDF names its heading font "Geist-Regular". It is really a
+  SemiBold instance of the variable Geist 1.002, cut down to the 20 letters of the seven headings.
+  `assets/fonts/Geist-SemiBold.ttf` is Geist 1.0.0 SemiBold (OFL, `Geist-OFL.txt`), converted to
+  TrueType outlines and cut to the WinAnsi characters. `fullfonts.js` swaps it in on load. The
+  existing headings keep their own widths, so they print exactly where they did. The small "8pcs"
+  uses the same font name but is the Regular weight, so its widths don't match and it is left alone.
+  The gold handwriting has no full font, so labels are still limited to `L S a e g h i l m n o p r s
+  t u w y`.
+- **Known bug (inherited):** renaming the MAINS heading makes it disappear. Its fieldmap entry
+  doesn't match the artwork (y 210 instead of 367). The other headings rename correctly.
 
 ## The Churn'd menu
 

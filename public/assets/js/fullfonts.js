@@ -11,10 +11,16 @@
    they are. The content streams don't change either: the fonts keep their /WinAnsiEncoding, so the
    bytes an edit writes for "Z" now find a Z outline instead of nothing.
 
+   TrueType subsets (Aiko's Geist headings) are swapped the same way, except a TrueType font program
+   is the whole .ttf: it goes in /FontFile2 as-is. The fonts stay simple WinAnsi fonts with the
+   non-symbolic flag, so a viewer maps each code through the full font's own Unicode cmap.
+
    FullFonts.embed(doc, { AOMonoBlack: '/assets/fonts/Aomono-Black.otf', … })
      -> { AOMonoBlack: 'ABC…', … }   the printable ASCII each face now holds (for the editor's
                                       character gate). Faces that failed to load are left out, and
-                                      their subset stays in place. */
+                                      their subset stays in place.
+   FullFonts.widths[face]            { char: width in 1000-unit em } for that printable ASCII, so an
+                                      editor can measure text it lays out in the full face. */
 (function(){
   // WinAnsiEncoding codes 128-159 -> Unicode (0 = unused); 32-127 and 160-255 are Latin-1 as-is
   const WIN_HI = [0x20AC,0,0x201A,0x0192,0x201E,0x2026,0x2020,0x2021,0x02C6,0x2030,0x0160,0x2039,0x0152,0,0x017D,0,
@@ -24,10 +30,11 @@
   function parseOtf(buf){
     const b = new DataView(buf), u8 = new Uint8Array(buf);
     const tag = o => String.fromCharCode(u8[o],u8[o+1],u8[o+2],u8[o+3]);
-    if(tag(0) !== 'OTTO') throw new Error('not a CFF OpenType font');
+    const tt = b.getUint32(0) === 0x00010000 || tag(0) === 'true';
+    if(tag(0) !== 'OTTO' && !tt) throw new Error('not an OpenType or TrueType font');
     const t = {};
     for(let i=0, n=b.getUint16(4); i<n; i++){ const o=12+16*i; t[tag(o)] = { off:b.getUint32(o+8), len:b.getUint32(o+12) }; }
-    for(const k of ['CFF ','cmap','hmtx','hhea','head']) if(!t[k]) throw new Error('font has no '+k+' table');
+    for(const k of [tt?'glyf':'CFF ','cmap','hmtx','hhea','head']) if(!t[k]) throw new Error('font has no '+k+' table');
     const upm = b.getUint16(t.head.off+18), nH = b.getUint16(t.hhea.off+34);
     const adv = g => b.getUint16(t.hmtx.off + 4*Math.min(g, nH-1));
     // Unicode -> glyph id, from the first format-4 (BMP) subtable
@@ -47,7 +54,9 @@
       }
       break;
     }
-    return { cff: u8.slice(t['CFF '].off, t['CFF '].off + t['CFF '].len), cmap, width: g => Math.round(adv(g)*1000/upm) };
+    const width = g => Math.round(adv(g)*1000/upm);
+    if(tt) return { ttf: u8.slice(), cmap, width };
+    return { cff: u8.slice(t['CFF '].off, t['CFF '].off + t['CFF '].len), cmap, width };
   }
 
   async function embed(doc, faces){
@@ -59,24 +68,43 @@
         loaded[name] = parseOtf(await r.arrayBuffer());
       }catch(e){ console.warn('FullFonts: kept the subset of', name, '-', e.message||e); }
     }));
-    const out = {};
+    const out = {}, progs = {};
     for(const [, obj] of doc.context.enumerateIndirectObjects()){
       if(!(obj instanceof PDFDict)) continue;
-      if(String(obj.get(PDFName.of('Type'))) !== '/Font' || String(obj.get(PDFName.of('Subtype'))) !== '/Type1') continue;
+      const sub = String(obj.get(PDFName.of('Subtype')));
+      if(String(obj.get(PDFName.of('Type'))) !== '/Font' || (sub !== '/Type1' && sub !== '/TrueType')) continue;
       if(String(obj.get(PDFName.of('Encoding'))) !== '/WinAnsiEncoding') continue;   // codes must mean WinAnsi for the widths below
       const base = String(obj.get(PDFName.of('BaseFont'))||'').replace(/^\/([A-Z]{6}\+)?/, '');
-      const f = loaded[base]; if(!f) continue;
+      const f = loaded[base]; if(!f || !(sub === '/TrueType' ? f.ttf : f.cff)) continue;
+      /* A TrueType swap keeps every width the subset already had: the text the artwork prints then
+         advances exactly as before, even where the full font rounds a glyph 1 unit differently.
+         Those widths also prove it is the SAME face. Instances of a variable font all embed under
+         the default name — Aiko's "Geist-Regular" is SemiBold for the headings and Regular for the
+         small "8pcs" — so a subset whose widths disagree is another weight and keeps its own font. */
+      const oldW = {};
+      if(f.ttf){
+        const first = +String(obj.get(PDFName.of('FirstChar'))||0), arr = doc.context.lookup(obj.get(PDFName.of('Widths')));
+        if(arr && arr.size) for(let i=0; i<arr.size(); i++){ const v = +String(arr.get(i)); if(v) oldW[first+i] = v; }
+        const other = Object.keys(oldW).some(code => { const g = f.cmap.get(winUni(+code)); return !g || Math.abs(f.width(g) - oldW[code]) > 2; });
+        if(other) continue;
+      }
       const fd = doc.context.lookup(obj.get(PDFName.of('FontDescriptor')), PDFDict);
-      const sd = doc.context.obj({ Subtype: 'Type1C', Length: f.cff.length });
-      fd.set(PDFName.of('FontFile3'), doc.context.register(PDFRawStream.of(sd, f.cff)));
+      // one program per face, however many font objects share it (Aiko's two pages share one Geist)
+      if(!progs[base]){
+        progs[base] = f.ttf
+          ? doc.context.register(PDFRawStream.of(doc.context.obj({ Length: f.ttf.length, Length1: f.ttf.length }), f.ttf))
+          : doc.context.register(PDFRawStream.of(doc.context.obj({ Subtype: 'Type1C', Length: f.cff.length }), f.cff));
+      }
+      fd.set(PDFName.of(f.ttf ? 'FontFile2' : 'FontFile3'), progs[base]);
       fd.delete(PDFName.of('CharSet'));   // listed the subset's glyphs; now wrong, and optional
-      const widths = [];
+      const widths = [], wmap = {};
       let chars = '';
       for(let code=32; code<=255; code++){
         const g = f.cmap.get(winUni(code));
-        widths.push(g ? f.width(g) : 0);
-        if(g && code < 127) chars += String.fromCharCode(code);   // editors write UTF-8, so only ASCII is a single byte
+        widths.push(g ? (oldW[code] || f.width(g)) : 0);
+        if(g && code < 127){ chars += String.fromCharCode(code); wmap[String.fromCharCode(code)] = f.width(g); }   // editors write UTF-8, so only ASCII is a single byte
       }
+      FullFonts.widths[base] = wmap;
       obj.set(PDFName.of('FirstChar'), PDFNumber.of(32));
       obj.set(PDFName.of('LastChar'), PDFNumber.of(255));
       obj.set(PDFName.of('Widths'), doc.context.obj(widths));
@@ -85,5 +113,5 @@
     return out;
   }
 
-  window.FullFonts = { embed, parseOtf };
+  const FullFonts = window.FullFonts = { embed, parseOtf, widths: {} };
 })();
