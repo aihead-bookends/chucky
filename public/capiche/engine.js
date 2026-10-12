@@ -12,25 +12,235 @@ const edits = {};
 let removed = new Set();
 let added = [];   // [{sec, name, desc, price, allergens:[], _id}]
 let markerEdits = {};   // dishId -> [marker types] override (dairy/gluten/jain/spicy/new)
-let persona = { occasion:'', guest:'' };   // personalised cover (occasion + guest name)
-// personalise-cover config for THIS menu. `del` = spans to hide when active (none for Capiche —
-// there's an empty gap under the logo). Coords are PDF points on the cover page.
-const COVER = { page:0, cx:113, adv:0.63, del:[],   // soft coral, centred on the Capiche logo/tagline block (x~113)
-  // Black, matching the motto block beneath it. Was a soft coral (0.95 0.62 0.57 rg) which printed
-  // noticeably paler than the wordmark and read as a different, washed-out element on the cover.
-  // `0 g` is the same ink this menu declares in add_const.ink_color, so it matches the motto exactly.
-  occ:{ y:472, size:13,   font:'/T1_2', color:'0 g' },                 // AOMonoBold
-  guest:{ y:454, size:11.5, font:'/T1_2', color:'0 g' } };
-function personaLine(spec, text){
-  const t=(text||'').toUpperCase(); if(!t) return '';
-  const w=t.length*COVER.adv*spec.size;
-  const x = spec.align==='right' ? (spec.right - w) : ((spec.cx!=null?spec.cx:COVER.cx) - w/2);
-  return '\nq BT '+spec.color+' '+spec.font+' 1 Tf '+spec.size+' 0 0 '+spec.size+' '+x.toFixed(2)+' '+spec.y+' Tm ('+escPdf(t)+')Tj ET Q';
+let persona = { on:false, occasion:'', guest:'', msg:'', size:'m', nameFont:'script', nameColor:'red', dx:0, dy:0, scale:1 };   // personalised cover: the switch, its text, its look, where it sits
+/* PERSONALISED COVER. While the switch is on, the handwritten motto on the cover strip (15" PIZZA …
+   UNREASONABLE HOSPITALITY) is REMOVED, so its space is blank paper, and a card for the guest is
+   printed there instead:
+     ✦  HAPPY BIRTHDAY  ✦      the occasion, handwritten like the motto, in the motto's black
+          Krish                the name: Capiche script, handwritten or AO Mono Black, red or black,
+          ~~~~~~               with a hand-drawn double underline in the same colour
+     WISHING YOU A YEAR …      the message, handwritten like the motto, at the size chosen in the dialog
+   Switched off, the motto is back and everything typed is kept for next time.
+   FONTS. The motto's DK Liquid Embrace is a subset with no C, G, J, K, Q, V, W or X (and isn't a free
+   font, so it can't be swapped for the full one), so "handwritten" is Gochi Hand, the closest open
+   font to it, and "Capiche script" is Leckerli One, the closest open font to the wordmark. Both are
+   full OFL TrueType files in /assets/fonts/, embedded whole as WinAnsi fonts on the cover page the
+   first time the card prints (an untouched menu exports exactly as before). If one fails to load,
+   its part prints in AO Mono instead (CFACES[].fb), which this menu always has.
+   LAYOUT. Each part takes the biggest size at which it fits COVER.w without breaking a word (the
+   message keeps the line breaks typed into it), and the block is centred in COVER's box, between the
+   logo and the red C mark. Then the whole card is scaled about that centre by persona.scale and
+   moved by persona.dx/dy (PDF points), which the box on the preview sets, like a QR code's.
+   The motto is the page's only /TT0 text block, found at runtime. */
+const COVER = { page:0, cx:113, adv:0.63, w:186, top:466, bottom:286, delFont:'/TT0',
+  red:'0 0.988 1 0 k', redS:'0 0.988 1 0 K', ink:'0.746 0.676 0.668 0.898 k', inkS:'0.746 0.676 0.668 0.898 K',
+  faces:{ bold:'/T1_2', black:'/T1_3' },   // the cover page's resource names, re-read from the page at boot
+  occ:  { face:'hand', color:'ink', max:19, min:11, lines:2, track:0.05, stars:true },
+  guest:{ script:{ face:'script', max:40, min:16, lines:2, track:0 },
+          hand:  { face:'hand',   max:34, min:14, lines:2, track:0.02 },
+          mono:  { face:'black',  max:26, min:13, lines:2, track:0.04 } },
+  msg:  { face:'hand', color:'ink', lines:8, track:0.03, sizes:{ s:12, m:14.5, l:17 } },
+  scale:{ min:0.5, max:2 } };
+/* the faces the card can print in. bold/black are the menu's own (full) AO Mono; hand/script are
+   loaded at boot and fall back to `fb` if they didn't load. `caps`: printed in capitals, like the motto. `bold`: Gochi Hand is a lighter pen than the motto's, so
+   it is thickened optically (text render mode 2: fill + an outline this many ems wide, in the same colour). */
+const CFACES = {
+  bold:  { mono:true, caps:true, lead:1.3 },
+  black: { mono:true, caps:true, lead:1.3 },
+  hand:  { url:'/assets/fonts/GochiHand-Regular.ttf',   ps:'GochiHand-Regular',   res:'CkCoverHand',   caps:true,  lead:1.15, fb:'bold', bold:0.045 },
+  script:{ url:'/assets/fonts/LeckerliOne-Regular.ttf', ps:'LeckerliOne-Regular', res:'CkCoverScript', caps:false, lead:1.12, fb:'black' } };
+const NAME_FONTS = ['script','hand','mono'], NAME_COLORS = ['red','ink'];
+const personaOn = () => !!persona.on;
+const personaHasText = () => !!(persona.occasion || persona.guest || persona.msg);
+const coverMsgSize = () => COVER.msg.sizes[persona.size] || COVER.msg.sizes.m;
+const coverGuestSpec = () => COVER.guest[persona.nameFont] || COVER.guest.script;
+const cfName = n => (CFACES[n] && CFACES[n].url && !CFACES[n].data) ? CFACES[n].fb : n;   // the face that actually prints
+const cfText = (t, n) => { t=normTypo(String(t||'')); return CFACES[cfName(n)].caps ? t.toUpperCase() : t; };
+const cfCap  = n => { const F=CFACES[cfName(n)]; return F.mono ? 0.72 : F.data.cap; };
+const cfRes  = n => { const k=cfName(n); return CFACES[k].mono ? COVER.faces[k] : '/'+CFACES[k].res; };
+function cfChars(n){
+  const k=cfName(n), A=(typeof ALLOWED!=='undefined'&&ALLOWED)||{};
+  return CFACES[k].mono ? ((k==='black' ? A.name : A.desc)||'') : CFACES[k].data.chars;
 }
-// {del:[spans to remove], add:'stamp'} for a given page when personalise is active
+// a line's printed width: AO Mono advances adv per glyph, the others by their own widths; tracking between glyphs
+function coverLineW(t, size, track, n){
+  if(!t.length) return 0;
+  const F=CFACES[cfName(n||'bold')];
+  if(F.mono) return size*(t.length*(COVER.adv+track) - track);
+  let w=0; for(const c of t) w += (F.data.w[c]!=null ? F.data.w[c] : 500)/1000;
+  return size*(w + track*(t.length-1));
+}
+// wrap words into lines no wider than COVER.w; a word wider than that is split where it has to be
+function coverWrap(words, meas){
+  const lines=[]; let cur='';
+  for(let w of words){
+    while(w.length>1 && meas(w)>COVER.w){
+      let k=w.length-1; while(k>1 && meas(w.slice(0,k))>COVER.w) k--;
+      if(cur){ lines.push(cur); cur=''; } lines.push(w.slice(0,k)); w=w.slice(k);
+    }
+    if(!cur) cur=w; else if(meas(cur+' '+w)<=COVER.w) cur+=' '+w; else { lines.push(cur); cur=w; }
+  }
+  if(cur) lines.push(cur); return lines;
+}
+/* Biggest size (max..min, half-point steps) at which `text` wraps into spec.lines unbroken — but one
+   line wins if it costs under 15% of the size: HAPPY ANNIVERSARY reads better at 17pt on one line
+   than broken in two at 19. A fixed `size` (the message) just wraps. Each typed line is wrapped on
+   its own, so a line break always holds. */
+function coverFit(text, spec, size){
+  const paras=cfText(text, spec.face).split('\n').map(l=>l.split(/\s+/).filter(Boolean)).filter(w=>w.length);
+  if(!paras.length) return null;
+  const words=paras.flat(), meas=s=>t=>coverLineW(t, s, spec.track, spec.face);
+  const wrap=s=>paras.flatMap(ws=>coverWrap(ws, meas(s)));
+  if(size){ const L=wrap(size); return {size, lines:L.slice(0,spec.lines), over:L.length>spec.lines}; }
+  const best=n=>{ for(let s=spec.max; s>=spec.min-1e-6; s-=0.5){
+    if(words.some(w=>meas(s)(w)>COVER.w)) continue;
+    const L=wrap(s); if(L.length<=n) return {size:s, lines:L, over:false}; } return null; };
+  const one=best(1), many=spec.lines>1? best(spec.lines) : one;
+  if(one && (!many || one.size>=spec.max*0.85 || one.size>=many.size)) return one;
+  if(many) return many;
+  const L=wrap(spec.min);   // too long even at the smallest size: show what fits, and say so
+  return {size:spec.min, lines:L.slice(0,spec.lines), over:L.length>spec.lines};
+}
+/* Everything the card prints, laid out from the top and then centred in the box: text lines with
+   their face, colour, size and tracking, the two stars beside the occasion, the underline under the
+   name. `box` is the card's outline in base position (before persona.scale/dx/dy), `over` when a part
+   had lines cut off, `tall` when the card at its scale is taller than the motto's space. */
+function coverLayout(){
+  const gs=Object.assign({}, coverGuestSpec(), { color:persona.nameColor==='ink'?'ink':'red', underline:true });
+  const parts=[['occ',persona.occasion,COVER.occ,null],['guest',persona.guest,gs,null],['msg',persona.msg,COVER.msg,coverMsgSize()]];
+  const text=[], art=[]; let y=0, over=false, prev=null;
+  for(const [k,src,spec,fixed] of parts){
+    const f=coverFit(src, spec, fixed); if(!f) continue;
+    over=over||f.over;
+    const lead=CFACES[cfName(spec.face)].lead;
+    f.lines.forEach((t,i)=>{
+      // first line: drop by its cap height; a new part leaves a gap; lines within a part `lead` apart
+      y -= !prev ? f.size*cfCap(spec.face) : (i===0 ? prev.size*0.45 + f.size*lead + (k==='msg'?8:4) : f.size*lead);
+      text.push({k, t, face:spec.face, color:spec.color, size:f.size, track:spec.track, y});
+      prev=f;
+    });
+    const last=text[text.length-1], lw=coverLineW(last.t, last.size, last.track, last.face);
+    if(spec.stars){ const r=Math.max(3, last.size*0.3); art.push({kind:'stars', y:last.y+last.size*cfCap(spec.face)*0.45, r, dx:lw/2+8+r}); }
+    if(spec.underline){ const drop=Math.max(5, last.size*(cfName(spec.face)==='script'?0.3:0.22));
+      art.push({kind:'underline', y:last.y-drop, half:lw/2+4, w:Math.max(1, last.size*0.05), color:spec.color}); y-=drop; }
+  }
+  if(!text.length) return {text:[], art:[], over:false, tall:false, box:null};
+  const last=text[text.length-1], h=-(y-last.size*0.28), dy=(COVER.top+COVER.bottom)/2 + h/2;
+  let x0=COVER.cx, x1=COVER.cx;
+  for(const L of text){ const w=coverLineW(L.t, L.size, L.track, L.face); L.y+=dy; L.x=COVER.cx - w/2; x0=Math.min(x0,L.x); x1=Math.max(x1,L.x+w); }
+  for(const a of art){ a.y+=dy; if(a.kind==='stars'){ x0=Math.min(x0, COVER.cx-a.dx-a.r); x1=Math.max(x1, COVER.cx+a.dx+a.r); } }
+  const first=text[0], box={ x0:x0-3, x1:x1+3, y1:first.y+first.size*cfCap(first.face)+3, y0:dy-h-3 };
+  return {text, art, over, tall: h*persona.scale > COVER.top-COVER.bottom+2, box};
+}
+// the card's centre in base position, which persona.scale scales about
+const coverCY = () => (COVER.top+COVER.bottom)/2;
+// base point -> printed point
+const coverXY = (x, y) => [COVER.cx + persona.dx + (x-COVER.cx)*persona.scale, coverCY() + persona.dy + (y-coverCY())*persona.scale];
+// the card's outline as printed (scaled and moved), for the box on the preview
+function coverBox(){
+  const L=coverLayout(); if(!L.box) return null;
+  const a=coverXY(L.box.x0, L.box.y0), b=coverXY(L.box.x1, L.box.y1);
+  return { x0:a[0], y0:a[1], x1:b[0], y1:b[1] };
+}
+// keep the card on the page: move it back in if the last move or resize left part of it off the edge
+function coverClamp(){
+  const B=coverBox(), sz=(typeof PAGES!=='undefined'&&PAGES&&PAGES[COVER.page])||[841.89,595.276]; if(!B) return;
+  if(B.x0<0) persona.dx-=B.x0; else if(B.x1>sz[0]) persona.dx-=B.x1-sz[0];
+  if(B.y0<0) persona.dy-=B.y0; else if(B.y1>sz[1]) persona.dy-=B.y1-sz[1];
+  persona.dx=Math.round(persona.dx*10)/10; persona.dy=Math.round(persona.dy*10)/10;
+}
+// characters the cover can't print, each part checked against the face it prints in
+function coverBadChars(){
+  const bad=new Set();
+  const chk=(s,n)=>{ const ok=cfChars(n); for(const c of cfText(s, n)) if(!/\s/.test(c)&&ok.indexOf(c)<0) bad.add(c); };
+  chk(persona.occasion, COVER.occ.face); chk(persona.msg, COVER.msg.face); chk(persona.guest, coverGuestSpec().face);
+  return [...bad];
+}
+// the cover page's own resource names for the AO Mono faces (page-local in PDF; /T1_2 and /T1_3 today)
+function coverResolveFonts(){
+  try{
+    const fonts=doc.getPage(COVER.page).node.Resources().lookup(PDFName.of('Font'));
+    for(const [k, ref] of fonts.entries()){
+      const base=String(doc.context.lookup(ref).get(PDFName.of('BaseFont'))||'');
+      if(/AOMonoBlack$/.test(base)) COVER.faces.black=k.asString();
+      else if(/AOMonoBold$/.test(base)) COVER.faces.bold=k.asString();
+    }
+  }catch(e){ console.warn('cover fonts: kept the defaults', e); }
+}
+// boot: fetch the handwritten and script faces, with their widths and metrics (nothing is embedded yet)
+async function coverLoadFonts(){
+  await Promise.all(Object.keys(CFACES).filter(n=>CFACES[n].url).map(async n=>{
+    const F=CFACES[n];
+    try{
+      const r=await fetch(F.url); if(!r.ok) throw new Error('HTTP '+r.status);
+      const buf=await r.arrayBuffer(), P=FullFonts.parseOtf(buf); if(!P.ttf) throw new Error('not a TrueType font');
+      const b=new DataView(buf), u8=new Uint8Array(buf), T={};
+      const tag=o=>String.fromCharCode(u8[o],u8[o+1],u8[o+2],u8[o+3]);
+      for(let i=0, k=b.getUint16(4); i<k; i++){ const o=12+16*i; T[tag(o)]=b.getUint32(o+8); }
+      const upm=b.getUint16(T.head+18), sc=v=>Math.round(v*1000/upm);
+      const capRaw=(T['OS/2']!=null && b.getUint16(T['OS/2'])>=2) ? b.getInt16(T['OS/2']+88) : 0;
+      const w={}, widths=[]; let chars='';
+      for(let c=32; c<=126; c++){ const g=P.cmap.get(c), wd=g?P.width(g):0; widths.push(wd); if(g){ const ch=String.fromCharCode(c); w[ch]=wd; chars+=ch; } }
+      F.data={ ttf:P.ttf, w, widths, chars, cap:capRaw? capRaw/upm : 0.7, capU:sc(capRaw||upm*0.7),
+        asc:sc(b.getInt16(T.hhea+4)), desc:sc(b.getInt16(T.hhea+6)), bbox:[36,38,40,42].map(o=>sc(b.getInt16(T.head+o))) };
+    }catch(e){ console.warn('cover font '+n+': printing in '+F.fb+' instead -', e.message||e); }
+  }));
+}
+/* Embed the faces the card prints in onto the cover page, once each: the whole .ttf as /FontFile2 and
+   a simple WinAnsi TrueType font over it (codes 32-126, which is all the editor lets through). */
+function coverEmbedFonts(){
+  const used=new Set([cfName(COVER.occ.face), cfName(COVER.msg.face), cfName(coverGuestSpec().face)]);
+  for(const n of used){
+    const F=CFACES[n]; if(F.mono || !F.data || F.ref) continue;
+    const d=F.data, ctx=doc.context;
+    const file=ctx.register(PDFLib.PDFRawStream.of(ctx.obj({ Length:d.ttf.length, Length1:d.ttf.length }), d.ttf));
+    const fd=ctx.register(ctx.obj({ Type:'FontDescriptor', FontName:F.ps, Flags:32, FontBBox:d.bbox, ItalicAngle:0,
+      Ascent:d.asc, Descent:d.desc, CapHeight:d.capU, StemV:80, FontFile2:file }));
+    F.ref=ctx.register(ctx.obj({ Type:'Font', Subtype:'TrueType', BaseFont:F.ps, FirstChar:32, LastChar:126,
+      Widths:d.widths, Encoding:'WinAnsiEncoding', FontDescriptor:fd }));
+    doc.getPage(COVER.page).node.Resources().lookup(PDFName.of('Font')).set(PDFName.of(F.res), F.ref);
+  }
+}
+// fill + outline for a face that is thickened (CFACES[].bold); the width is in page units, so it scales with the size
+function coverBoldOps(T){
+  const b=CFACES[cfName(T.face)].bold; if(!b) return ' 0 Tr';
+  return ' '+strokeColourOf(COVER[T.color])+' 2 Tr '+jFmt(b*T.size)+' w 1 j';
+}
+// a four-point star, filled
+function coverStar(cx, cy, r){
+  const k=0.24, P=(x,y)=>jFmt(x)+' '+jFmt(y);
+  return P(cx,cy+r)+' m '+P(cx+r*k,cy+r*k)+' l '+P(cx+r,cy)+' l '+P(cx+r*k,cy-r*k)+' l '+P(cx,cy-r)+' l '+P(cx-r*k,cy-r*k)+' l '+P(cx-r,cy)+' l '+P(cx-r*k,cy+r*k)+' l h f';
+}
+// the hand-drawn double underline: two gentle S-curves, the lower one a touch shorter
+function coverUnderline(cx, y, half, w){
+  const P=(x,yy)=>jFmt(x)+' '+jFmt(yy);
+  const s=(x0,x1,yy,amp)=>P(x0,yy)+' m '+P(x0+(x1-x0)*0.3,yy+amp)+' '+P(x0+(x1-x0)*0.7,yy-amp)+' '+P(x1,yy+amp*0.4)+' c S';
+  return jFmt(w)+' w 1 J 1 j '+s(cx-half, cx+half, y, 1.1)+' '+s(cx-half+5, cx+half-3, y-2.6, -0.9);
+}
+function coverDel(){
+  if(COVER._del) return COVER._del;
+  const t=pageText(COVER.page), tf=COVER.delFont+' 1 Tf', i=t.indexOf(tf);
+  // exactly one motto block, or leave the artwork alone
+  if(i<0 || t.indexOf(tf, i+1)>=0) return COVER._del=[];
+  const bt=t.lastIndexOf('\nBT', i), et=t.indexOf('\nET', i);
+  return COVER._del=(bt>=0&&et>i)? [[bt+1, et+3]] : [];
+}
+// {del:[spans to remove], add:'stamp'} for a given page while the switch is on (the motto goes even
+// before any text is typed: on means "this cover is personalised")
 function personaCover(p){
-  if(p!==COVER.page || (!persona.occasion && !persona.guest)) return { del:[], add:'' };
-  return { del:(COVER.del||[]).slice(), add: personaLine(COVER.occ, persona.occasion)+personaLine(COVER.guest, persona.guest) };
+  if(p!==COVER.page || !personaOn()) return { del:[], add:'' };
+  const L=coverLayout();
+  if(!L.text.length) return { del:coverDel().slice(), add:'' };
+  coverEmbedFonts();
+  const s=persona.scale, cy=coverCY();
+  // the whole card in one group, scaled about its centre and moved: base coordinates inside
+  let add='\nq '+jFmt(s)+' 0 0 '+jFmt(s)+' '+jFmt(COVER.cx+persona.dx-s*COVER.cx)+' '+jFmt(cy+persona.dy-s*cy)+' cm';
+  add+=L.text.map(T=>'\nBT '+COVER[T.color]+coverBoldOps(T)+' '+cfRes(T.face)+' 1 Tf '+jFmt(T.track)+' Tc 0 Tw '+jFmt(T.size)+' 0 0 '+jFmt(T.size)+' '+T.x.toFixed(2)+' '+T.y.toFixed(2)+' Tm ('+escPdf(T.t)+')Tj ET').join('');
+  for(const a of L.art){
+    if(a.kind==='stars') add+='\nq '+COVER.red+' '+coverStar(COVER.cx-a.dx, a.y, a.r)+' '+coverStar(COVER.cx+a.dx, a.y, a.r)+' Q';
+    if(a.kind==='underline') add+='\nq '+(a.color==='ink'?COVER.inkS:COVER.redS)+' '+coverUnderline(COVER.cx, a.y, a.half, a.w)+' Q';
+  }
+  return { del:coverDel().slice(), add:add+'\nQ' };
 }
 // Korea is an AIKO marker and was never part of this menu: zero Capiche dishes carry it baked
 // (dairy 37, gluten 35, jain 20, spicy 5, new 8). The printed legend is Dairy / Gluten /
@@ -2958,7 +3168,9 @@ async function regenerate(){
       ops.push(safeOp(p,o));   // delete removed items' NEW badges + ride survivors up by their own Y
     }
     for(const sp of mkDelSpans) ops.push({s:sp[0],e:sp[1],rep:enc(safeDel(p,sp[0],sp[1],keepFont(sp,p)))});   // strip edited dishes' baked markers (restamped below)
-    const pc=personaCover(p);   // personalised cover: hide any `del` spans, stamp occasion + guest
+    const pc=personaCover(p);   // personalised cover: hide the motto, stamp the occasion, guest and message
+    // nothing else may touch the bytes of a hidden block: two ops over one range corrupt the splice
+    if(pc.del.length) ops = ops.filter(o=> !pc.del.some(d=> o.s < d[1] && d[0] < o.e));
     for(const sp of pc.del){ ops.push({s:sp[0],e:sp[1],rep:enc(safeDel(p,sp[0],sp[1],keepFont(sp,p)))}); }
     let edited = ops.length ? spliceBytes(ps.pristine, ops) : ps.pristine;
     const addStr = appendedForPage(p, st.removedSlots, st.growSlots) + mkAppend + pc.add + ao.add;
@@ -3034,6 +3246,7 @@ function pvSync(){
     hl.appendChild(d);
   }
   try{ if(typeof QRK!=='undefined') QRK.hits(hl, activePage, W, H); }catch(e){ console.error(e); }
+  try{ personaHits(hl, activePage, W, H); }catch(e){ console.error(e); }
 }
 function pvJump(id){
   _pvSel=id; pvSync();
@@ -3581,6 +3794,9 @@ function updateGate(){
   // ADD-ONS panel inputs: unprintable characters block like a font error, over-length like overflow
   document.querySelectorAll('.adn.err').forEach(()=>gl++);
   document.querySelectorAll('.adn.over').forEach(()=>ov++);
+  // the personalised cover prints the same PDF: an unprintable letter or a message that won't fit blocks too
+  { const pr=personaProblem(); if(pr&&pr.glyph) gl++; if(pr&&pr.over) ov++;
+    const pb=document.getElementById('persona'); if(pb) pb.classList.toggle('on', personaOn()); }   // lit on a reopened personalised menu too
   document.querySelectorAll('.card').forEach(c=>{
     const g=c.querySelector('.gl'),s=c.querySelector('.sp'),h=c.querySelector('.hint'); if(!h) return;
     let over=false;
@@ -3655,28 +3871,191 @@ document.getElementById('export').addEventListener('click', async ()=>{
 });
 // ---- Publish: chucky-2 — the shared MenuState (assets/js/menustate.js) owns the Publish button:
 // the version check, the conflict handling and the live status. Wired up at the end of boot().
-// ---------- PERSONALISE COVER: occasion + guest name stamped on the cover, then Export/Share ----------
-const OCCASIONS=[['','—'],['WELCOME','Welcome'],['HAPPY BIRTHDAY','Birthday'],['HAPPY ANNIVERSARY','Anniversary'],
-  ['CONGRATULATIONS','Congratulations'],["LET'S CELEBRATE","Let's Celebrate"],['__custom','Custom message…']];
+// ---------- PERSONALISE COVER: occasion, guest name and a message in place of the motto ----------
+const OCCASIONS=[['','—'],['HAPPY BIRTHDAY','Birthday'],['HAPPY ANNIVERSARY','Anniversary'],['WELCOME','Welcome'],
+  ['CONGRATULATIONS','Congratulations'],["LET'S CELEBRATE","Let's Celebrate"],['__custom','Custom occasion…']];
+// what's wrong with the personalised cover, if anything (the dialog and the export gate share it)
+function personaProblem(){
+  if(!personaOn()) return null;
+  const bad=coverBadChars();
+  if(bad.length) return {glyph:true, msg:'can’t print:  '+bad.join('  ')};
+  if(coverLayout().over) return {over:true, msg:'too long for the cover — shorten the name or the message'};
+  return null;
+}
+// the dialog's choice buttons: [value, label] per group
+const PERS_NAME_FONTS=[['script','Capiche script'],['hand','Handwritten'],['mono','Bold mono']];
+const PERS_NAME_COLORS=[['red','Red'],['ink','Black']];
+const persBtns=(attr, opts, cur)=>opts.map(([v,l])=>'<button type="button" data-'+attr+'="'+v+'"'+(cur===v?' class="on"':'')+'>'+l+'</button>').join('');
+// the cover card changed: preview, export gate, autosave, and the dialog/panel if they're open
+function personaChanged(){
+  schedulePreview(); updateGate(); try{MEM.tick();}catch(_){}
+  const pb=document.getElementById('persona'); if(pb) pb.classList.toggle('on', personaOn());
+  if(_persStatus) _persStatus();
+  if(_persPanelShow) _persPanelShow();
+}
+let _persStatus=null;
 function openPersona(){
   if(document.querySelector('.persov')) return;
+  persPanelClose();
   const preset=OCCASIONS.find(o=>o[0]===persona.occasion) ? persona.occasion : (persona.occasion?'__custom':'');
   const ov=document.createElement('div'); ov.className='persov';
-  ov.innerHTML='<div class="perscard"><div class="pershd">✨ Personalise the cover<span>occasion + guest name — printed on the menu cover</span></div>'
+  ov.innerHTML='<div class="perscard"><div class="pershd">✨ Personalise the cover<span>for a birthday, an anniversary or any occasion</span></div>'
+    +'<label class="persswitch"><input type="checkbox" class="pers-on"'+(persona.on?' checked':'')+'><span class="pstrack"></span>'
+    +'<span class="pstext"><b>Personalised cover</b><span class="pssub"></span></span></label>'
+    +'<div class="persfields">'
     +'<label class="perslbl">Occasion</label><select class="perssel">'+OCCASIONS.map(o=>'<option value="'+o[0]+'"'+(o[0]===preset?' selected':'')+'>'+o[1]+'</option>').join('')+'</select>'
-    +'<input class="persocc" maxlength="28" placeholder="OCCASION (e.g. HAPPY BIRTHDAY)" '+(preset==='__custom'?'':'style="display:none"')+' value="'+esc(preset==='__custom'?persona.occasion:'')+'">'
-    +'<label class="perslbl">Guest / table name</label><input class="persguest" maxlength="24" placeholder="GUEST NAME" value="'+esc(persona.guest||'')+'">'
+    +'<input class="persocc" maxlength="34" placeholder="OCCASION (e.g. HAPPY RETIREMENT)" '+(preset==='__custom'?'':'style="display:none"')+' value="'+esc(preset==='__custom'?persona.occasion:'')+'">'
+    +'<label class="perslbl">Guest / table name</label><input class="persguest" maxlength="40" placeholder="Guest name" value="'+esc(persona.guest||'')+'">'
+    +'<label class="perslbl">Name style</label><div class="perssize persnf">'+persBtns('nf', PERS_NAME_FONTS, persona.nameFont)+'</div>'
+    +'<label class="perslbl">Name colour</label><div class="perssize persnc">'+persBtns('nc', PERS_NAME_COLORS, persona.nameColor)+'</div>'
+    +'<label class="perslbl">Your text <span class="persopt">— optional · Enter starts a new line</span></label><textarea class="persmsg" maxlength="200" rows="4" placeholder="WISHING YOU A YEAR AS GOOD AS A FRESH PIE!&#10;LOVE, TEAM CAPICHE">'+esc(persona.msg||'')+'</textarea>'
+    +'<label class="perslbl">Text size</label><div class="perssize perssz">'+persBtns('size', [['s','Small'],['m','Medium'],['l','Large']], persona.size)+'</div>'
+    +'</div>'
+    +'<div class="persmeta"></div>'
     +'<div class="persfoot"><button class="cropbtn ghost" data-a="clear" type="button">Clear</button><button class="cropbtn save" data-a="done" type="button">Done</button></div></div>';
   document.body.appendChild(ov);
-  const sel=ov.querySelector('.perssel'), occ=ov.querySelector('.persocc'), guest=ov.querySelector('.persguest');
-  const apply=()=>{ let o = sel.value==='__custom' ? occ.value : sel.value; persona.occasion=(o||'').toUpperCase(); persona.guest=(guest.value||''); schedulePreview(); try{MEM.tick();}catch(_){} document.getElementById('persona').classList.toggle('on', !!(persona.occasion||persona.guest)); };
+  const sel=ov.querySelector('.perssel'), occ=ov.querySelector('.persocc'), guest=ov.querySelector('.persguest'),
+        msg=ov.querySelector('.persmsg'), meta=ov.querySelector('.persmeta'), sw=ov.querySelector('.pers-on'),
+        sub=ov.querySelector('.pssub'), fields=ov.querySelector('.persfields');
+  const showBtns=()=>{
+    ov.querySelectorAll('[data-nf]').forEach(b=>b.classList.toggle('on', b.dataset.nf===persona.nameFont));
+    ov.querySelectorAll('[data-nc]').forEach(b=>b.classList.toggle('on', b.dataset.nc===persona.nameColor));
+    ov.querySelectorAll('[data-size]').forEach(b=>b.classList.toggle('on', b.dataset.size===persona.size));
+    // the script name keeps the capitals as typed; the other faces print in capitals
+    guest.classList.toggle('cased', !CFACES[cfName(coverGuestSpec().face)].caps);
+  };
+  const close=()=>{ _persStatus=null; ov.remove(); };
+  _persStatus=()=>{
+    sw.checked=personaOn();
+    sub.textContent = personaOn() ? 'On — the “15” PIZZA … UNREASONABLE HOSPITALITY” motto is removed and your text is printed there'
+                                  : 'Off — the cover shows the usual “15” PIZZA …” motto' + (personaHasText()? ' (your text is kept)' : '');
+    fields.classList.toggle('off', !personaOn());
+    const pr=personaProblem(), L=personaOn()&&personaHasText()? coverLayout() : null;
+    meta.textContent = pr ? pr.msg
+      : (!personaOn() ? '' : !personaHasText() ? 'add an occasion, a name or some text — the motto’s space stays blank until you do'
+      : L&&L.tall ? 'taller than the motto’s space — make it smaller or move it on the preview'
+      : '✓ fits · after Done, drag it on the preview to move it, or click it to change its size');
+    meta.classList.toggle('bad', !!pr);
+    showBtns();
+  };
+  // typing switches the cover on: whoever types a wish wants to see it
+  const apply=()=>{ let o = sel.value==='__custom' ? occ.value : sel.value;
+    persona.occasion=normTypo(o||'').toUpperCase().trim(); persona.guest=normTypo(guest.value||'').trim();
+    persona.msg=normTypo(msg.value||'').replace(/[ \t]+\n/g,'\n').trim();
+    if(personaHasText()) persona.on=true;
+    coverClamp(); personaChanged(); };
+  sw.onchange=()=>{ persona.on=sw.checked; personaChanged(); };
   sel.onchange=()=>{ occ.style.display = sel.value==='__custom'?'':'none'; if(sel.value==='__custom') occ.focus(); apply(); };
-  occ.oninput=apply; guest.oninput=apply;
-  ov.addEventListener('click',e=>{ if(e.target===ov){ ov.remove(); return; } const b=e.target.closest('[data-a]'); if(!b)return;
-    if(b.dataset.a==='clear'){ sel.value=''; occ.value=''; occ.style.display='none'; guest.value=''; apply(); }
-    else ov.remove();
+  occ.oninput=apply; guest.oninput=apply; msg.oninput=apply;
+  ov.addEventListener('click',e=>{ if(e.target===ov){ close(); return; }
+    const pick=e.target.closest('[data-size],[data-nf],[data-nc]');
+    if(pick){
+      if(pick.dataset.size) persona.size=pick.dataset.size;
+      if(pick.dataset.nf) persona.nameFont=pick.dataset.nf;
+      if(pick.dataset.nc) persona.nameColor=pick.dataset.nc;
+      if(personaHasText()) persona.on=true;
+      coverClamp(); personaChanged(); return;
+    }
+    const b=e.target.closest('[data-a]'); if(!b)return;
+    if(b.dataset.a==='clear'){ sel.value=''; occ.value=''; occ.style.display='none'; guest.value=''; msg.value='';
+      Object.assign(persona, { size:'m', nameFont:'script', nameColor:'red', dx:0, dy:0, scale:1 }); apply(); persona.on=false; personaChanged(); }
+    else close();
   });
-  document.getElementById('persona').classList.toggle('on', !!(persona.occasion||persona.guest));
+  _persStatus();
+}
+/* The card's box on the preview, like a QR code's: drag it to move the card, drag its corner to resize
+   it, click it for a panel with the size slider, nudge arrows and Reset. The box is the card's
+   printed outline (coverBox), so it follows every edit; the PDF follows on the next preview. */
+let _persPanel=null, _persPanelShow=null, _persGeo=null;
+function persPlace(d, B){
+  const {W,H}=_persGeo;
+  d.style.left=(B.x0/W*100)+'%'; d.style.width=((B.x1-B.x0)/W*100)+'%';
+  d.style.top=((H-B.y1)/H*100)+'%'; d.style.height=((B.y1-B.y0)/H*100)+'%';
+}
+function personaHits(hl, page, W, H){
+  hl.querySelectorAll('.pers-box').forEach(n=>n.remove());
+  _persGeo={hl, W, H};
+  const B=(page===COVER.page && personaOn()) ? coverBox() : null;
+  if(!B){ persPanelClose(); return; }
+  const d=document.createElement('div'); d.className='pers-box'+(_persPanel?' sel':'');
+  persPlace(d, B);
+  d.title='Drag to move · drag the corner to resize · click for size and position';
+  d.innerHTML='<span class="pers-tag">✨ Personalised cover</span><span class="pers-grip" title="Drag to resize"></span>';
+  d.addEventListener('pointerdown', e=>{
+    if(e.button!==0) return;
+    e.preventDefault(); e.stopPropagation();
+    const r=hl.getBoundingClientRect(), kx=W/r.width, ky=H/r.height, x0=e.clientX, y0=e.clientY;
+    const grip=!!e.target.closest('.pers-grip'), dx0=persona.dx, dy0=persona.dy, s0=persona.scale;
+    // resizing scales about the card's centre: by how much further the pointer is from it than at the start
+    const c=coverXY(COVER.cx, coverCY()), cxS=r.left+c[0]/kx, cyS=r.top+(H-c[1])/ky, dist0=Math.max(8, Math.hypot(x0-cxS, y0-cyS));
+    let moved=false;
+    try{ d.setPointerCapture(e.pointerId); }catch(_){}
+    const mv=ev=>{
+      if(!moved && Math.hypot(ev.clientX-x0, ev.clientY-y0)<4) return;
+      moved=true; d.classList.add('drag');
+      if(grip) persona.scale=Math.min(COVER.scale.max, Math.max(COVER.scale.min, s0*Math.hypot(ev.clientX-cxS, ev.clientY-cyS)/dist0));
+      else { persona.dx=dx0+(ev.clientX-x0)*kx; persona.dy=dy0-(ev.clientY-y0)*ky; }
+      const nb=coverBox(); if(nb) persPlace(d, nb);
+      if(_persPanelShow) _persPanelShow();
+    };
+    const up=()=>{
+      d.removeEventListener('pointermove', mv); d.removeEventListener('pointerup', up); d.removeEventListener('pointercancel', up);
+      d.classList.remove('drag');
+      if(!moved){ persPanelOpen(d); return; }
+      persona.scale=Math.round(persona.scale*100)/100; coverClamp();
+      const nb=coverBox(); if(nb) persPlace(d, nb);
+      personaChanged();
+    };
+    d.addEventListener('pointermove', mv); d.addEventListener('pointerup', up); d.addEventListener('pointercancel', up);
+  });
+  d.addEventListener('click', e=>e.stopPropagation());
+  hl.appendChild(d);
+}
+function persPanelClose(){
+  if(_persPanel){ _persPanel.remove(); _persPanel=null; _persPanelShow=null; }
+  document.removeEventListener('pointerdown', persPanelOutside, true);
+  const b=document.querySelector('.pers-box'); if(b) b.classList.remove('sel');
+}
+function persPanelOutside(e){ if(_persPanel && !_persPanel.contains(e.target) && !(e.target.closest&&e.target.closest('.pers-box'))) persPanelClose(); }
+function persPanelOpen(anchor){
+  persPanelClose();
+  const p=_persPanel=document.createElement('div'); p.className='qrk-panel pers-panel';
+  p.innerHTML='<div class="qrk-h"><b>Personalised cover</b><button class="qrk-x" title="Close">×</button></div>'
+    +'<div class="qrk-row"><span>Size</span><button class="qb" data-a="minus" title="Smaller">−</button>'
+    +'<input type="range" min="'+COVER.scale.min*100+'" max="'+COVER.scale.max*100+'" step="1">'
+    +'<button class="qb" data-a="plus" title="Bigger">+</button><span class="qrk-val"></span></div>'
+    +'<div class="qrk-row"><span>Move</span><button class="qb" data-a="L" title="Left">←</button><button class="qb" data-a="U" title="Up">↑</button>'
+    +'<button class="qb" data-a="D" title="Down">↓</button><button class="qb" data-a="R" title="Right">→</button><span class="qrk-hint">or drag it</span></div>'
+    +'<div class="qrk-warn" hidden>Taller than the motto’s space — make it smaller or move it.</div>'
+    +'<div class="qrk-acts"><button data-a="edit">Edit text…</button><button data-a="reset">Reset</button></div>';
+  document.body.appendChild(p);
+  const a=anchor.getBoundingClientRect(), pw=p.offsetWidth||292, ph=p.offsetHeight||200;
+  let left=a.right+10, top=a.top;
+  if(left+pw>innerWidth-8) left=a.left-pw-10;
+  if(left<8) left=Math.max(8, Math.min(innerWidth-pw-8, a.left));
+  if(top+ph>innerHeight-8) top=innerHeight-ph-8;
+  p.style.left=Math.max(8,left)+'px'; p.style.top=Math.max(8,top)+'px';
+  anchor.classList.add('sel');
+  const rng=p.querySelector('input[type=range]'), val=p.querySelector('.qrk-val'), warn=p.querySelector('.qrk-warn');
+  _persPanelShow=()=>{
+    rng.value=Math.round(persona.scale*100); val.textContent=Math.round(persona.scale*100)+'%';
+    const L=coverLayout(); warn.hidden=!L.tall;
+    const box=document.querySelector('.pers-box'), B=coverBox(); if(box&&B&&_persGeo) persPlace(box, B);
+  };
+  _persPanelShow();
+  const set=s=>{ persona.scale=Math.min(COVER.scale.max, Math.max(COVER.scale.min, Math.round(s*100)/100)); coverClamp(); personaChanged(); };
+  rng.addEventListener('input', ()=>set(+rng.value/100));
+  const nudge=2.835;   // 1 mm
+  p.addEventListener('click', e=>{
+    const b=e.target.closest('[data-a],.qrk-x'); if(!b) return;
+    if(b.classList.contains('qrk-x')){ persPanelClose(); return; }
+    const act=b.dataset.a;
+    if(act==='minus'||act==='plus') set(persona.scale+(act==='plus'?0.05:-0.05));
+    else if('LRUD'.includes(act)){ persona.dx+=act==='L'?-nudge:act==='R'?nudge:0; persona.dy+=act==='U'?nudge:act==='D'?-nudge:0; coverClamp(); personaChanged(); }
+    else if(act==='reset'){ Object.assign(persona, {dx:0, dy:0, scale:1}); personaChanged(); }
+    else if(act==='edit'){ persPanelClose(); openPersona(); }
+  });
+  setTimeout(()=>document.addEventListener('pointerdown', persPanelOutside, true), 0);
 }
 document.getElementById('persona').addEventListener('click', openPersona);
 
@@ -3684,8 +4063,25 @@ document.getElementById('persona').addEventListener('click', openPersona);
 // ---- edit-memory glue (capiche) ----
 const MEM_BRAND='capiche';
 let memBaseVer='';
-function memSnapshot(){ return { qr:QRK.snap(), edits:{...edits}, removed:[...removed], added, markerEdits, persona:{...persona}, addons: addonsSnap() }; }
-function memApply(st){ QRK.load(st&&st.qr); for(const k in edits) delete edits[k]; Object.assign(edits, st.edits||{}); rewrapBaked(); /* chucky-2 */ removed=new Set(st.removed||[]); added=st.added||[]; markerEdits=st.markerEdits||{}; persona=Object.assign({occasion:'',guest:''}, st.persona||{});
+/* A menu saved before the switch and the message existed was personalised exactly when it had text.
+   So `on` is only written when it differs from that, and `msg` only when there is one: an old menu
+   snapshots exactly as it did (a new key would read as an unsaved change) and opens the same way. */
+function memSnapshot(){ const pe={occasion:persona.occasion, guest:persona.guest}; if(persona.msg) pe.msg=persona.msg;
+  if(persona.on!==personaHasText()) pe.on=persona.on;
+  if(persona.size&&persona.size!=='m') pe.size=persona.size;
+  // the card's look and place, likewise only when they differ from the defaults
+  if(persona.nameFont!=='script') pe.nameFont=persona.nameFont;
+  if(persona.nameColor!=='red') pe.nameColor=persona.nameColor;
+  if(persona.dx) pe.dx=persona.dx; if(persona.dy) pe.dy=persona.dy;
+  if(persona.scale!==1) pe.scale=persona.scale;
+  return { qr:QRK.snap(), edits:{...edits}, removed:[...removed], added, markerEdits, persona:pe, addons: addonsSnap() }; }
+function personaLoad(sp){ sp=sp||{};
+  const num=(v,d)=>(typeof v==='number'&&isFinite(v))? v : d;
+  persona={ occasion:String(sp.occasion||''), guest:String(sp.guest||''), msg:String(sp.msg||''), on:false, size:(sp.size in COVER.msg.sizes)? sp.size : 'm',
+    nameFont: NAME_FONTS.includes(sp.nameFont)? sp.nameFont : 'script', nameColor: NAME_COLORS.includes(sp.nameColor)? sp.nameColor : 'red',
+    dx:num(sp.dx,0), dy:num(sp.dy,0), scale:Math.min(COVER.scale.max, Math.max(COVER.scale.min, num(sp.scale,1))) };
+  persona.on = (typeof sp.on==='boolean') ? sp.on : personaHasText(); }
+function memApply(st){ QRK.load(st&&st.qr); for(const k in edits) delete edits[k]; Object.assign(edits, st.edits||{}); rewrapBaked(); /* chucky-2 */ removed=new Set(st.removed||[]); added=st.added||[]; markerEdits=st.markerEdits||{}; personaLoad(st.persona);
   if(addons){
     if(st.addons && st.addons.rows){ addons.rows=st.addons.rows.map(r=>({key:r.key, name:r.name, price:r.price, removed:!!r.removed})); addons.title=st.addons.title||''; }
     else addonsInit();
@@ -3835,6 +4231,8 @@ async function boot(){
     FULL_NAME_FACE = !!full.AOMonoBlack;
     if(full.AOMonoBlack) ALLOWED.name = full.AOMonoBlack;
     if(full.AOMonoBold)  ALLOWED.desc = full.AOMonoBold;
+    coverResolveFonts();          // the personalised cover prints in these faces under the cover page's own names
+    await coverLoadFonts();       // …and in the handwritten and script faces (AO Mono stands in for one that fails)
     for(let p=0;p<doc.getPageCount();p++){
       const page=doc.getPage(p); const ref=page.node.get(PDFName.of('Contents'));
       const stream=doc.context.lookup(ref);

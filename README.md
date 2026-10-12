@@ -235,6 +235,34 @@ leaves it less room. MARGHERITA has 20 characters a line with its usual 3 marker
 cut down to what does fit, which can look as if the edit did nothing. The card says exactly what
 prints and how to fix it, and Export is paused until the name fits.
 
+**Personalised covers** (✨ Personalise). The dialog has an on/off switch. **On:** the handwritten
+motto on the cover strip (15" PIZZA … UNREASONABLE HOSPITALITY) is removed, leaving blank paper, and
+a card for the guest is printed there: the occasion between two red stars, the guest's name with a
+hand-drawn double underline, then your own text at the size you pick (Small, Medium or Large).
+**Off:** the motto is back and the text is kept for next time. Typing switches it on, and Clear
+empties the fields, resets the look and position, and switches it off.
+
+The occasion and your text are handwritten in capitals like the motto. The name has three styles:
+Capiche script (default, keeps the capitals as typed), Handwritten, or Bold mono (AO Mono Black),
+in red (default) or black. The motto's own font, DK Liquid Embrace, can't be used: the PDF holds only
+the motto's letters (no C, G, J, K, Q, V, W or X) and it is a paid font. So "handwritten" is
+Gochi Hand, the closest open font to it, thickened slightly to match the motto's pen, and "Capiche
+script" is Leckerli One, the closest open font to the wordmark. Both are OFL fonts in
+`public/assets/fonts/` with their licences. They are embedded whole on the cover page the first time
+a card prints. If one fails to load, that part prints in AO Mono instead.
+
+On the preview the card has a box like a QR code's. Drag it to move the card, drag its corner to
+resize it, or click it for a size slider (50–200%), nudge arrows and Reset. The card is kept on the
+page. The occasion and name are set as large as fits the strip, and line breaks typed into the text
+are kept. Text cut off for length, or a character the font can't print, blocks Export. A card taller
+than the motto’s space only shows a warning, because it can be shrunk or moved. Switched off, the
+motto prints exactly as before (the two fonts stay embedded if the card printed earlier in the session).
+
+Saved in the menu's `persona`. `msg` is written only when there is text, `size` only when it isn't
+Medium, `on` only when it differs from the old rule (on exactly when there is text), and `nameFont`,
+`nameColor`, `dx`, `dy` and `scale` only when they differ from script, red, 0, 0 and 1. So menus
+saved before these existed open as they did.
+
 **Fixed from the original engine** (each marked `chucky-2` in `engine.js`):
 - Published add-on prices were dropped on every load (add-ons were set up after the state was applied).
 - The layout plan was cached without the markers, so toggling a marker kept using the old room. The
