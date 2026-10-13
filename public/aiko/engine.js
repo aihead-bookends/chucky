@@ -945,8 +945,13 @@ function opsForPage(fields, priceShift, skip, fieldShift){
       /* Headers are drawn per kerning group — (Ri)Tj 0 Tc 0 Tw (c)Tj 1.471 0 Td (e)Tj — so patching
          the string literals would leave the stale Td offsets behind. Replace the WHOLE run with one
          Tm + Tj. The gold `rg` and the /TTn Tf sit BETWEEN the two runs, so they are untouched. */
+      /* A label the subset can't print is drawn in the look-alike face AFTER the page's content
+         (labelJS, appended by regenerate): the baked run is kept but emptied, so its font and the
+         gold fill still sit where they were and nothing after it in the block changes. */
+      const _look=(f.kind==='script')? labelUse(f, val) : null;
+      if(_look) _labelAdds.push({ page:f.page, text:_look.text, x:hx, y:f.y+(fieldShift[f.id]||0) });
       ops.push({s:f.run_span[0],e:f.run_span[1],
-        rep:enc(fmtNum(f.size)+' 0 0 '+fmtNum(f.size)+' '+fmtNum(hx)+' '+fmtNum(f.y+(fieldShift[f.id]||0))+' Tm\n0 Tc 0 Tw\n('+escPdf(val)+')Tj')});
+        rep:enc(fmtNum(f.size)+' 0 0 '+fmtNum(f.size)+' '+fmtNum(hx)+' '+fmtNum(f.y+(fieldShift[f.id]||0))+' Tm\n0 Tc 0 Tw\n('+(_look?'':escPdf(val))+')Tj')});
       /* A decorative label exists TWICE in the artwork: as this /TT2 text run AND as stroked vector
          letterforms drawn on top of it (8 `q..Q` groups and ~15.5KB for "Starters" alone, spanning
          exactly the word's x-range). Editing only the text left the old word's outline in place, so
@@ -1331,6 +1336,58 @@ function appendedForPage(p, removedSlots, growSlots){
    Line width is a graphics-state value in user space — the 12pt Tm does not scale it. */
 const NS={ GAP:48, HEAD:24.57, SIZE:16, TC:-0.024, LSIZE:12, LDX:-8, LDY:8, PITCH0:24.6, GOLD:'0.933 0.698 0.169 rg', GOLD_S:'0.933 0.698 0.169 RG', LSTROKE:0.25 };
 let HEAD_CHARS='', HEAD_W={};   // what the heading face can print, and its widths (1000-unit em)
+/* THE GOLD HANDWRITING. The labels' own face, Ghost Calls Dialog, is embedded as a 19-glyph subset
+   (L S a e g h i l m n o p r s t u w y — no space, no x) and is not a free font, so it can't be
+   swapped for the full one the way Geist is. A label that needs any other letter prints in Covered
+   By Your Grace instead (OFL, assets/fonts/), the closest open hand to it: marker capitals, which is
+   how the baked labels read, leaned 12° like them and stroked 0.3pt for the marker weight. A label
+   the subset CAN print still prints in the designer's own face. The .ttf is embedded whole, once,
+   as a simple WinAnsi TrueType font under /CkLabel on every page, the first time a label needs it
+   (labelEmbed: a menu with no such label exports exactly as before; the base PDF and every
+   fieldmap offset stay as they are); if it fails to load, labels keep the subset's letter gate. */
+const LABEL={ url:'/assets/fonts/CoveredByYourGrace.ttf', ps:'CoveredByYourGrace', res:'CkLabel',
+  size:10.5, slant:0.2126, stroke:0.3, chars:'', widths:{}, ok:false };
+async function labelLoadFont(){
+  try{
+    const r=await fetch(LABEL.url); if(!r.ok) throw new Error('HTTP '+r.status);
+    const buf=await r.arrayBuffer(), P=FullFonts.parseOtf(buf); if(!P.ttf) throw new Error('not a TrueType font');
+    const b=new DataView(buf), u8=new Uint8Array(buf), T={}, tag=o=>String.fromCharCode(u8[o],u8[o+1],u8[o+2],u8[o+3]);
+    for(let i=0, n=b.getUint16(4); i<n; i++){ const o=12+16*i; T[tag(o)]=b.getUint32(o+8); }
+    const upm=b.getUint16(T.head+18), sc=v=>Math.round(v*1000/upm);
+    const widths=[], W={}; let chars='';
+    for(let c=32; c<=126; c++){ const g=P.cmap.get(c), w=g?P.width(g):0; widths.push(w); if(g){ const ch=String.fromCharCode(c); W[ch]=w; chars+=ch; } }
+    LABEL.data={ ttf:P.ttf, widths, bbox:[36,38,40,42].map(o=>sc(b.getInt16(T.head+o))),
+      asc:sc(b.getInt16(T.hhea+4)), desc:sc(b.getInt16(T.hhea+6)), capU:sc(upm*0.7) };
+    LABEL.chars=chars; LABEL.widths=W; LABEL.ok=true;
+  }catch(e){ console.warn('label font: labels keep the subset’s letters', e); }
+}
+// the first time a label is drawn in it: put the whole .ttf in the document and the font on every page
+function labelEmbed(){
+  if(LABEL.ref || !LABEL.ok) return;
+  const d=LABEL.data, ctx=doc.context;
+  const file=ctx.register(PDFRawStream.of(ctx.obj({ Length:d.ttf.length, Length1:d.ttf.length }), d.ttf));
+  const fd=ctx.register(ctx.obj({ Type:'FontDescriptor', FontName:LABEL.ps, Flags:32, FontBBox:d.bbox, ItalicAngle:0,
+    Ascent:d.asc, Descent:d.desc, CapHeight:d.capU, StemV:80, FontFile2:file }));
+  LABEL.ref=ctx.register(ctx.obj({ Type:'Font', Subtype:'TrueType', BaseFont:LABEL.ps, FirstChar:32, LastChar:126, Widths:d.widths, Encoding:'WinAnsiEncoding', FontDescriptor:fd }));
+  for(let p=0; p<doc.getPageCount(); p++) doc.getPage(p).node.Resources().lookup(PDFName.of('Font')).set(PDFName.of(LABEL.res), LABEL.ref);
+}
+// how a label prints: null when the designer's subset has every letter of it (or it is empty), else
+// the look-alike face and the text it shows — capitals, as the baked labels read. `f` may be null.
+function labelUse(f, text){
+  const cs=(f&&f.charset)||'', t=String(text||'');
+  if(!t || [...t].every(c=>cs.indexOf(c)>=0)) return null;
+  return LABEL.ok ? { text: normTypo(t).toUpperCase() } : null;
+}
+function labelAdv(text){ let w=0; for(const ch of String(text||'')) w+=(LABEL.widths[ch]||0); return w/1000*LABEL.size; }
+// a label in the look-alike face: leaned by its text matrix, filled and stroked gold, in its own q/Q
+// (line width and render mode are graphics state: set inside a baked block they would leak past ET)
+function labelJS(text, x, y, page){
+  labelEmbed();
+  const s=LABEL.size, sz=PAGES[page]||[595.276,841.89];
+  return '\nq\n0 '+jFmt(sz[1])+' '+jFmt(sz[0])+' '+jFmt(-sz[1])+' re\nW n\nBT\n'+NS.GOLD+' '+NS.GOLD_S+' '+jFmt(LABEL.stroke)+' w 1 j 2 Tr\n/'+LABEL.res+' 1 Tf\n0 Tc 0 Tw '
+    +jFmt(s)+' 0 '+jFmt(s*LABEL.slant)+' '+jFmt(s)+' '+jFmt(x)+' '+jFmt(y)+' Tm\n('+jEsc(text)+')Tj\nET\nQ\n';
+}
+let _labelAdds=[];   // baked labels retyped in the look-alike face this pass: {page, text, x, y} (see opsForPage)
 function nsLH(){ return Math.abs(AC.desc_leading*AC.desc_size); }   // 8.4pt
 function nsPitch(n){ return NS.PITCH0+n*nsLH(); }
 function nsSection(ns){
@@ -1355,7 +1412,8 @@ function nsHeadFields(after){
   return { serif:hf||null, script:(hf&&FM.fields.find(f=>f.id===hf.pair))||null };
 }
 function nsTitleWidth(t){ let w=0; for(const ch of String(t||'')) w+=(HEAD_W[ch]||0); return w/1000*NS.SIZE+String(t||'').length*NS.TC*NS.SIZE; }
-function nsLabelWidth(after, t){ const lf=nsHeadFields(after).script; let w=0; const W=(lf&&lf.widths)||{};
+function nsLabelWidth(after, t){ const lf=nsHeadFields(after).script, L=labelUse(lf, t); if(L) return labelAdv(L.text);
+  let w=0; const W=(lf&&lf.widths)||{};
   for(const ch of String(t||'')) w+=(W[ch]||0); return w/1000*NS.LSIZE; }
 function nsDescLines(it, sec){ return addedDescWrap(it.desc, it.grams, sec).lines.filter(Boolean).length || (it.grams?1:0); }
 // lowest ink of a dish whose name sits at y with n description lines
@@ -1434,10 +1492,13 @@ function nsHeadJS(h){
   const title=String(h.ns.title||'').trim(), label=String(h.ns.label||'').trim();
   const p=[];
   if(title) p.push('BT\n'+AC.name_color+'\n'+SF+' 1 Tf\n'+jFmt(NS.TC)+' Tc 0 Tw '+jFmt(NS.SIZE)+' 0 0 '+jFmt(NS.SIZE)+' '+jFmt(h.x)+' '+jFmt(h.y)+' Tm\n('+jEsc(title)+')Tj\nET');
-  if(label) p.push('BT\n'+NS.GOLD+' '+NS.GOLD_S+' '+jFmt(NS.LSTROKE)+' w 2 Tr\n'+LF+' 1 Tf\n0 Tc 0 Tw '+jFmt(NS.LSIZE)+' 0 0 '+jFmt(NS.LSIZE)+' '+jFmt(h.x+nsTitleWidth(title)+NS.LDX)+' '+jFmt(h.y+NS.LDY)+' Tm\n('+jEsc(label)+')Tj\nET');
-  if(!p.length) return '';
+  let look='';   // the label in the look-alike face, when the subset can't print it
+  if(label){ const lx=h.x+nsTitleWidth(title)+NS.LDX, ly=h.y+NS.LDY, L=labelUse(script, label);
+    if(L) look=labelJS(L.text, lx, ly, h.sec.page);
+    else p.push('BT\n'+NS.GOLD+' '+NS.GOLD_S+' '+jFmt(NS.LSTROKE)+' w 2 Tr\n'+LF+' 1 Tf\n0 Tc 0 Tw '+jFmt(NS.LSIZE)+' 0 0 '+jFmt(NS.LSIZE)+' '+jFmt(lx)+' '+jFmt(ly)+' Tm\n('+jEsc(label)+')Tj\nET'); }
+  if(!p.length) return look;
   const sz=PAGES[h.sec.page]||[595.276,841.89], W=sz[0], H=sz[1];
-  return '\nq\n0 '+jFmt(H)+' '+jFmt(W)+' '+jFmt(-H)+' re\nW n\n'+p.join('\n')+'\nQ\n';
+  return '\nq\n0 '+jFmt(H)+' '+jFmt(W)+' '+jFmt(-H)+' re\nW n\n'+p.join('\n')+'\nQ\n'+look;
 }
 function nsForPage(p, removedSlots, growSlots){
   if(!newSecs.length) return '';
@@ -2535,6 +2596,7 @@ async function regenerate(){
     const divs = _dividerLines(ps.pristine);
     const inDiv = (s,e)=> divs.some(d=> d.full[0]<=s && e<=d.full[1]);
     const shiftOps = st.shiftOps.filter(o=> !inDiv(o.s,o.e));   // divider cms handled by own-Y, not block-shift
+    _labelAdds=[];   // filled by opsForPage: baked labels retyped in the look-alike face, drawn with addStr
     let ops = opsForPage(FM.fields.filter(f=>f.page===p), st.priceShift, skip, st.fieldShift).concat(shiftOps);
     // carve divider spans out of block-deletes so bundled dividers are never collaterally deleted
     let dels=[];
@@ -2590,7 +2652,8 @@ async function regenerate(){
     const pc=personaCover(p);
     for(const sp of pc.del){ ops.push({s:sp[0],e:sp[1],rep:enc(keepFont(sp,p))}); }
     let edited = ops.length ? spliceBytes(ps.pristine, ops) : ps.pristine;
-    const addStr = appendedForPage(p, st.removedSlots, st.growSlots) + nsForPage(p, st.removedSlots, st.growSlots) + markerAddStr + pc.add;
+    const lookStr=_labelAdds.filter(l=>l.page===p).map(l=>labelJS(l.text, l.x, l.y, p)).join('');
+    const addStr = appendedForPage(p, st.removedSlots, st.growSlots) + nsForPage(p, st.removedSlots, st.growSlots) + markerAddStr + pc.add + lookStr;
     if(addStr){ const ab=enc(addStr); const m=new Uint8Array(edited.length+ab.length); m.set(edited,0); m.set(ab,edited.length); edited=m; }
     ps.dict.set(PDFName.of('Length'), PDFNumber.of(edited.length));
     doc.context.assign(ps.ref, PDFRawStream.of(ps.dict, edited));
@@ -2712,7 +2775,7 @@ function highlightField(el){
   // Uppercase NAMES only. This runs on a 160ms debounce after every keystroke and rewrites
   // innerHTML, so uppercasing here re-shouted descriptions in the DOM and the next input event
   // then captured the shouted text — which defeated the sentence-case fix in the capture path.
-  const text=(kind==='name')? normTypo(el.textContent).toUpperCase() : normTypo(el.textContent),
+  const text=(kind==='name'||el.dataset.upper)? normTypo(el.textContent).toUpperCase() : normTypo(el.textContent),   // data-upper: an added description, which prints in capitals
         off=document.activeElement===el?getCaret(el):null;
   const toks=text.match(/(\s+|[^\s]+)/g)||[]; let html="";
   for(const tok of toks){
@@ -2758,7 +2821,9 @@ function itemsForPage(p){
   return {items,extras};
 }
 // text width from the header font's own /Widths (1000-unit em), stored on the field
-function headerAdv(f, str){ let w=0; const W=f.widths||{};
+function headerAdv(f, str){
+  const L=(f.kind==='script')? labelUse(f,str) : null; if(L) return labelAdv(L.text);   // look-alike face
+  let w=0; const W=f.widths||{};
   for(const ch of String(str||'')) w+=(W[ch]||0); return w/1000*f.size; }
 /* Byte range of the stroked vector letterforms that sit ON TOP of a decorative label's text run.
    Derived at runtime rather than baked into the fieldmap so no rebuild is needed: walk from the end
@@ -2814,6 +2879,12 @@ function shiftArtOrigins(txt, dx, dy){
 function headerBadChars(f, val){
   const cs=f.charset||''; const out=[];
   for(const ch of new Set(String(val||''))) if(cs.indexOf(ch)<0) out.push(ch);
+  // a decorative label the subset can't print goes to the look-alike face (labelUse), so only what
+  // THAT face lacks is unprintable — judged on the capitals it will show
+  if(out.length && f.kind==='script' && LABEL.ok){
+    const bad=[]; for(const ch of new Set(normTypo(String(val||'')).toUpperCase())) if(LABEL.chars.indexOf(ch)<0) bad.push(ch);
+    return bad;
+  }
   return out;
 }
 function descText(d){ return (d.id in edits)? edits[d.id] : d.display; }
@@ -2865,15 +2936,9 @@ function colWord(x){ return x<200?'left':x<450?'middle':'right'; }
 function renderAddZone(ed){
   const secs=sectionsForPage(activePage);
   if(!secs.length) return;
-  added.forEach((a,idx)=>{
+  added.forEach(a=>{
     if(SECTIONS[a.sec].page!==activePage || SECTIONS[a.sec]._new) return;   // listed under their own new section
-    const c=document.createElement('div'); c.className='addcard';
-    const n=document.createElement('span'); n.className='ac-n'; n.textContent=a.name||'(unnamed)';
-    const t=document.createElement('span'); t.className='ac-tag'; t.textContent='NEW IN '+SECTIONS[a.sec].label;
-    const pr=document.createElement('span'); pr.className='ac-price'; pr.textContent=(a.price?('\u20b9'+a.price):'')+(a.price2?('  \u20b9'+a.price2):'');
-    const x=document.createElement('button'); x.className='ac-x'; x.textContent='\u2715'; x.title='Remove this new item';
-    x.onclick=()=>{ const k=added.indexOf(a); if(k>=0)added.splice(k,1); buildEditor(); schedulePreview(); };
-    c.append(n,t,pr,x); ed.appendChild(c);
+    ed.appendChild(addedCard(a, 'NEW IN '+SECTIONS[a.sec].label));
   });
   const zone=document.createElement('div'); zone.className='addzone';
   const btn=document.createElement('button'); btn.className='addbtn'; btn.textContent='+  Add a new item';
@@ -2953,6 +3018,93 @@ function renderAddZone(ed){
   };
 }
 
+/* An added dish gets the SAME card a baked dish gets — editable name, description, grams, prices and
+   markers — bound to `added[k]` instead of `edits`. It used to be a read-only strip with a ✕ (and
+   no styling), so a typo meant deleting the dish and typing it in again. The fields carry no data-id,
+   which is what keeps the baked-field input handler out (it keys on one); their own handlers write
+   the item, then the preview, the room notes and the export gate catch up. The rules are the add
+   form's: the name fits the column, the description two lines, a dish in a baked section needs one,
+   and a letter the font lacks (highlightField's .gl) blocks export. */
+const ADDED_MARKERS=['dairy','gluten','sesame','jain','korea','new'];   // what the add form offers
+function addedCard(a, tagText){
+  const sec=SECTIONS[a.sec], isNew=!!sec._new;
+  const card=document.createElement('div'); card.className='card addedcard';
+  const nrow=document.createElement('div'); nrow.className='nrow';
+  const tag=document.createElement('span'); tag.className='ac-tag'; tag.textContent=tagText; nrow.appendChild(tag);
+  const name=document.createElement('div'); name.className='name'; name.contentEditable='true'; name.spellcheck=false;
+  name.dataset.kind='name'; name.textContent=a.name||'';
+  nrow.appendChild(name);
+  const pr=document.createElement('div'); pr.className='prices';
+  const two=sec.price_right_2!=null;
+  for(const [k,ttl] of (two? [['price','Regular'],['price2','Large']] : [['price','Price']])){
+    const w=document.createElement('div'); w.className='pwrap';
+    const inp=document.createElement('input'); inp.className='price'; inp.title=ttl+' \u20b9'; inp.inputMode='numeric'; inp.maxLength=4; inp.value=a[k]||'';
+    inp.oninput=()=>{ const v=inp.value.replace(/[^0-9]/g,''); if(inp.value!==v) inp.value=v; a[k]=v; schedulePreview(); };
+    w.appendChild(inp); pr.appendChild(w);
+  }
+  nrow.appendChild(pr);
+  const rm=document.createElement('button'); rm.className='rm'; rm.type='button'; rm.textContent='\u2715'; rm.title='Remove this dish';
+  rm.onclick=()=>{ const k=added.indexOf(a); if(k>=0) added.splice(k,1); buildEditor(); schedulePreview(); };
+  nrow.appendChild(rm); card.appendChild(nrow);
+  // the name's room: the column up to the price, in this section's mono advance (as the add form)
+  const nwid=Math.floor(((sec.price_right||sec.col_x+233)-sec.col_x-6)/(AC.adv_name*(sec.name_size||11)));
+  const nmeta=document.createElement('div'); nmeta.className='metarow';
+  const nlbl=document.createElement('span'); nlbl.className='lbl'; nlbl.textContent='Name';
+  const nctr=document.createElement('span'); nctr.className='ctr'; nmeta.append(nlbl, nctr); card.appendChild(nmeta);
+  let lt=null; const later=fn=>{ clearTimeout(lt); lt=setTimeout(()=>{ fn(); nsRefreshNotes(); updateGate(); }, 160); };   // its own timer: the baked fields' etimer is theirs
+  const syncName=()=>{ const n=(a.name||'').length, bad=!n||n>nwid;
+    nctr.textContent= !n? 'give the dish a name' : n>nwid? 'too long — this name has room for '+nwid+' characters' : n+'/'+nwid;
+    nctr.classList.toggle('over', bad); nctr.classList.toggle('nsbad', bad); };
+  name.oninput=()=>{ a.name=normTypo(name.textContent).toUpperCase().trim(); syncName(); later(()=>highlightField(name)); schedulePreview(); };
+  const desc=document.createElement('div'); desc.className='desc'; desc.contentEditable='true'; desc.spellcheck=false;
+  desc.dataset.kind='desc'; desc.dataset.upper='1'; desc.textContent=a.desc||'';
+  const noEnter=e=>{ if(e.key==='Enter') e.preventDefault(); };   // one line of text each: a break would split the DOM, not the print
+  name.onkeydown=noEnter; desc.onkeydown=noEnter;
+  card.appendChild(desc);
+  const meta=document.createElement('div'); meta.className='metarow';
+  const lbl=document.createElement('span'); lbl.className='lbl'; const ctr=document.createElement('span'); ctr.className='ctr';
+  meta.append(lbl, ctr); card.appendChild(meta);
+  const syncDesc=()=>{ const w=addedDescWrap(a.desc, a.grams, sec), n=w.lines.filter(Boolean).length, bad=w.overflow||(!a.desc&&!isNew);
+    lbl.textContent='Description · up to 2 lines'+(isNew? ' · optional' : '');
+    ctr.textContent= w.overflow? 'too long — shorten it' : !a.desc? (isNew? 'empty — prints as a one-line add-on' : 'give the dish a description') : n+'/2 lines';
+    ctr.classList.toggle('over', bad); ctr.classList.toggle('nsbad', bad);
+    if(isNew) tag.textContent=(a.desc? 'NEW DISH' : 'ONE-LINE ADD-ON')+' · '+sec.label; };
+  // the weight is its own small tag after the description, never typed into it (see the add form)
+  desc.oninput=()=>{ a.desc=normTypo(desc.textContent).toUpperCase().replace(/\s*\[\d+\s*GMS\]\s*$/i,'').trim(); syncDesc(); later(()=>highlightField(desc)); schedulePreview(); };
+  const grow=document.createElement('div'); grow.className='metarow';
+  const glbl=document.createElement('span'); glbl.className='lbl'; glbl.textContent='Grams';
+  const gwrap=document.createElement('span'); gwrap.style.cssText='display:flex;align-items:center;background:var(--well);border:1px solid var(--line2);border-radius:7px;padding:1px 8px';
+  const ginp=document.createElement('input'); ginp.className='price'; ginp.style.width='52px'; ginp.style.textAlign='left'; ginp.inputMode='numeric'; ginp.maxLength=4; ginp.value=a.grams||'';
+  ginp.oninput=()=>{ const v=ginp.value.replace(/[^0-9]/g,''); if(ginp.value!==v) ginp.value=v; a.grams=v; syncDesc(); later(()=>{}); schedulePreview(); };
+  const gsuf=document.createElement('span'); gsuf.className='lbl'; gsuf.textContent='gms'; gsuf.style.marginLeft='2px';
+  gwrap.append(ginp, gsuf); grow.append(glbl, gwrap); card.appendChild(grow);
+  const mrow=document.createElement('div'); mrow.className='metarow'; mrow.style.alignItems='center';
+  const mlbl=document.createElement('span'); mlbl.className='lbl'; mlbl.textContent='Markers';
+  const mwrap=document.createElement('span'); mwrap.className='afchk'; mwrap.style.cssText='gap:13px;margin-top:0';
+  for(const m of ADDED_MARKERS){
+    const lab=document.createElement('label'); const cb=document.createElement('input'); cb.type='checkbox'; cb.value=m; cb.checked=(a.allergens||[]).includes(m);
+    cb.onchange=()=>{ a.allergens=ADDED_MARKERS.filter(x=>mwrap.querySelector('input[value="'+x+'"]').checked); schedulePreview(); };
+    lab.appendChild(cb); lab.insertAdjacentHTML('beforeend', (window.ALLERGEN_ICONS&&window.ALLERGEN_ICONS[m])||''); lab.appendChild(document.createTextNode(' '+(m==='new'?'NEW badge':m[0].toUpperCase()+m.slice(1))));
+    mwrap.appendChild(lab);
+  }
+  mrow.append(mlbl, mwrap); card.appendChild(mrow);
+  const hint=document.createElement('div'); hint.className='hint'; card.appendChild(hint);   // updateGate's line (font, spelling)
+  syncName(); syncDesc(); highlightField(name); highlightField(desc);
+  return card;
+}
+// the room line under a new section's heading; refreshed in place when a dish on the page is edited
+function nsNoteFill(note, ns, si, L){
+  const col=L&&L.cols.find(c=>c.anchor===ns.after);
+  note.classList.remove('bad','nsbad');
+  if(col&&col.room<0){ note.textContent='Doesn’t fit: runs '+(-col.room).toFixed(0)+'pt into the legend. Remove a dish or shorten a description.'; note.classList.add('bad','nsbad'); }
+  else { const n=nsRoomCount(si); note.textContent=n? 'Room for about '+n+' more dish'+(n===1?'':'es')+' (one-line add-ons take less).' : 'No room for another dish here.'; }
+}
+function nsRefreshNotes(){
+  const notes=document.querySelectorAll('#editor .nsnote[data-ns]'); if(!notes.length) return;
+  const L=nsLiveLayout(activePage), base=nsBase();
+  notes.forEach(note=>{ const k=newSecs.findIndex(ns=>ns.id===note.dataset.ns); if(k>=0) nsNoteFill(note, newSecs[k], base+k, L); });
+}
+
 /* ---- NEW SECTIONS panel ---------------------------------------------------------------------
    One group per new section on this page (its heading inputs, its dishes, the room it has left),
    then "+ Add a new section". The heading inputs are `.secinp` like the baked headings', so an
@@ -2970,9 +3122,11 @@ function nsTitleProblem(ns){
   return null;
 }
 function nsLabelProblem(ns){
-  const lf=nsHeadFields(ns.after).script, bad=lf? headerBadChars(lf, ns.label||'') : [];
-  return bad.length? 'can’t print:  '+bad.map(c=>c===' '?'space':c).join('  ')+' — the handwriting has only  '+((lf&&lf.charset)||'').split('').join(' ') : null;
+  const lf=nsHeadFields(ns.after).script, bad=headerBadChars(lf||{kind:'script', charset:''}, ns.label||'');
+  return bad.length? 'can’t print:  '+bad.map(c=>c===' '?'space':c).join('  ')+(LABEL.ok? '' : ' — the handwriting has only  '+((lf&&lf.charset)||'').split('').join(' ')) : null;
 }
+// the label's all-clear line: which hand it prints in
+function nsLabelOk(ns){ return labelUse(nsHeadFields(ns.after).script, ns.label)? '✓ prints in gold — a close match to the menu’s handwriting' : '✓ prints in the gold handwriting'; }
 function nsRemove(k){
   const si=nsBase()+k;
   added=added.filter(a=>a.sec!==si).map(a=>a.sec>si? Object.assign({},a,{sec:a.sec-1}) : a);
@@ -3006,7 +3160,7 @@ function renderNewSections(ed){
       const tp=nsTitleProblem(ns), lp=nsLabelProblem(ns);
       for(const m of metas){
         const pr=m.script? (lp? {glyph:true, msg:lp} : (tp&&!tp.glyph&&/wide/.test(tp.msg)? tp : null)) : tp;
-        m.meta.textContent=pr? pr.msg : (m.script? (ns.label? '✓ prints in the gold handwriting' : 'optional') : '✓ fits');
+        m.meta.textContent=pr? pr.msg : (m.script? (ns.label? nsLabelOk(ns) : 'optional') : '✓ fits');
         m.meta.className='afmeta'+(pr?' bad':'');
         m.inp.classList.toggle('badglyph', !!(pr&&pr.glyph));
         m.inp.classList.toggle('nsbad', !!(pr&&!pr.glyph&&!m.script));
@@ -3015,11 +3169,8 @@ function renderNewSections(ed){
     row('Section name', 'title', 'Add Ons', false);
     row('Decorative label (optional)', 'label', 'more', true);
     check();
-    const col=L&&L.cols.find(c=>c.anchor===ns.after);
-    const note=document.createElement('div'); note.className='nsnote';
-    if(col&&col.room<0){ note.textContent='Doesn’t fit: runs '+(-col.room).toFixed(0)+'pt into the legend. Remove a dish or shorten a description.'; note.classList.add('bad','nsbad'); }
-    else { const n=nsRoomCount(si); note.textContent=n? 'Room for about '+n+' more dish'+(n===1?'':'es')+' (one-line add-ons take less).' : 'No room for another dish here.'; }
-    card.appendChild(note);
+    const note=document.createElement('div'); note.className='nsnote'; note.dataset.ns=ns.id;
+    nsNoteFill(note, ns, si, L); card.appendChild(note);
     const btns=document.createElement('div'); btns.className='nsbtns';
     const addB=document.createElement('button'); addB.type='button'; addB.textContent='+ Add a dish here';
     addB.onclick=()=>{ _addInto=si; buildEditor(); };
@@ -3029,15 +3180,7 @@ function renderNewSections(ed){
       nsRemove(k); try{ MEM.tick(); }catch(_){} buildEditor(); schedulePreview(); };
     btns.append(addB, delB); card.appendChild(btns);
     ed.appendChild(card);
-    for(const a of items){
-      const c=document.createElement('div'); c.className='addcard';
-      const n=document.createElement('span'); n.className='ac-n'; n.textContent=a.name||'(unnamed)';
-      const t=document.createElement('span'); t.className='ac-tag'; t.textContent=(a.desc? 'NEW DISH' : 'ONE-LINE ADD-ON')+' · '+sec.label;
-      const pr=document.createElement('span'); pr.className='ac-price'; pr.textContent=a.price?('₹'+a.price):'';
-      const x=document.createElement('button'); x.className='ac-x'; x.textContent='✕'; x.title='Remove this dish';
-      x.onclick=()=>{ const i=added.indexOf(a); if(i>=0) added.splice(i,1); buildEditor(); schedulePreview(); };
-      c.append(n,t,pr,x); ed.appendChild(c);
-    }
+    for(const a of items) ed.appendChild(addedCard(a, (a.desc? 'NEW DISH' : 'ONE-LINE ADD-ON')+' · '+sec.label));
   }
 }
 function renderAddSectionZone(ed){
@@ -3065,7 +3208,7 @@ function renderAddSectionZone(ed){
     const ns=draft(), tp=nsTitleProblem(ns), lp=nsLabelProblem(ns);
     tm.textContent=tp? tp.msg : '✓ fits'; tm.classList.toggle('bad', !!(tp&&ns.title));
     if(!ns.title){ tm.textContent='e.g. Add Ons, Bao, Sips, Sides'; }
-    lm.textContent=lp|| (ns.label? '✓ prints in the gold handwriting' : 'this font only has  '+((nsHeadFields(ns.after).script||{}).charset||'').split('').join(' '));
+    lm.textContent=lp|| (ns.label? nsLabelOk(ns) : (LABEL.ok? 'a short word beside the name, e.g. Starters' : 'this font only has  '+((nsHeadFields(ns.after).script||{}).charset||'').split('').join(' ')));
     lm.classList.toggle('bad', !!lp);
     const ok=firstFit>=0;
     wm.textContent=ok? 'It goes in the free space at the bottom of that column, above the legend.'
@@ -3122,7 +3265,7 @@ function buildSectionPanel(ed){
         const shown=bad.map(c=>c===' '?'space':c);
         if(bad.length){ meta.textContent='can’t print:  '+shown.join('  '); meta.className='afmeta bad'; }
         else if(!v.trim()){ meta.textContent='empty — this heading will disappear'; meta.className='afmeta bad'; }
-        else { meta.textContent='✓ fits · '+headerAdv(f,v).toFixed(1)+'pt wide'; meta.className='afmeta'; }
+        else { meta.textContent='✓ fits · '+headerAdv(f,v).toFixed(1)+'pt wide'+(f.kind==='script'&&labelUse(f,v)? ' · close-match handwriting' : ''); meta.className='afmeta'; }
         return !bad.length && !!v.trim();
       };
       inp.oninput=()=>{
@@ -3304,6 +3447,10 @@ let etimer=null, ptimer=null;
 function schedulePreview(){ clearTimeout(ptimer); ptimer=setTimeout(async()=>{ await regenerate(); renderPreview(); }, 380); }
 document.getElementById('editor').addEventListener('input', e=>{
   const el=e.target;
+  /* BAKED fields only. An added dish's card (addedCard) reuses these classes for its styling but has
+     its own handlers and no fieldmap id — without this, each keystroke there also wrote
+     edits['undefined'] and rewrote the field's innerHTML under the caret. */
+  if(!el.dataset || !el.dataset.id) return;
   if(el.classList.contains('name')||el.classList.contains('desc')){
     // Names are set in caps by the artwork; DESCRIPTIONS are sentence case. Force-uppercasing a
     // description SHOUTED it in the export and, because dataset.orig holds the sentence-case
@@ -3689,8 +3836,8 @@ async function boot(){
        the widths of the glyphs it did NOT use are the variable font's Thin master, A = 612).
        Geist-SemiBold.ttf is that release (OFL, Geist-OFL.txt) converted to TrueType outlines and cut
        to the WinAnsi characters. It changes the loaded document only: the base PDF, its version key
-       and every fieldmap offset stay as they are. The handwritten label face has no full version,
-       so it keeps its subset and its character gate. */
+       and every fieldmap offset stay as they are. The handwritten label face has no full version;
+       a label it can't print goes to a look-alike face instead (labelLoadFont, just below). */
     document.getElementById('bootmsg').textContent='Loading fonts…';
     const _serif=FM.fields.filter(f=>f.role==='header'&&f.kind==='serif');
     const _subW=(_serif[0]&&_serif[0].widths)||{};
@@ -3704,6 +3851,7 @@ async function boot(){
         for(const f of _serif){ f.charset=HEAD_CHARS; f.widths=Object.assign({}, HEAD_W, f.widths||{}); }
       }
     }catch(e){ console.warn('Geist: kept the subset', e); }
+    await labelLoadFont();        // the gold labels' look-alike face, for letters the subset lacks (see LABEL)
     syncSections();
     /* chucky-2: MenuState.boot retries the load, applies a published state only if it was made for
        THIS base PDF (its edits address byte spans in one file), falls back to the menu's starting

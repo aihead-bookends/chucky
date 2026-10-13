@@ -328,8 +328,25 @@ to the price instead of breaking early.
   TrueType outlines and cut to the WinAnsi characters. `fullfonts.js` swaps it in on load. The
   existing headings keep their own widths, so they print exactly where they did. The small "8pcs"
   uses the same font name but is the Regular weight, so its widths don't match and it is left alone.
-  The gold handwriting has no full font, so labels are still limited to `L S a e g h i l m n o p r s
-  t u w y`.
+- **Decorative labels can use any letter.** The gold handwriting (Ghost Calls Dialog) is a 19-glyph
+  subset, `L S a e g h i l m n o p r s t u w y`, with no space and no x, and it is not a free font, so
+  it can't be swapped for a full one the way Geist is. A label it can print (a baked one nobody
+  renamed, or a short word like "more") still prints in the designer's own face. Any other label, on
+  a new section or a renamed baked heading, prints in Covered By Your Grace instead
+  (`assets/fonts/CoveredByYourGrace.ttf`, OFL, licence beside it): marker capitals at 10.5pt, leaned
+  12° like the baked ones and outlined 0.3pt for the marker weight. It is a close match, not an
+  identical one, and the form says so ("close-match handwriting"). It is drawn after the page's own
+  content; the baked label's run is kept but emptied and its stroked outline removed, as before. The
+  font is embedded whole the first time a label needs it, so a menu with no such label exports exactly
+  as before. A character it lacks, such as é, still blocks export. If the font fails to load, labels
+  go back to the 19-letter limit. See `LABEL` in `aiko/engine.js`.
+- **Added dishes are editable.** A dish added with "+ Add a new item", in a new or an existing
+  section, is a normal card with name, description, grams, price(s) and markers you can change in
+  place. It used to be a read-only strip with only a ✕, so a typo meant deleting the dish and typing
+  it again. The add form's rules apply: the name has to fit the column, the description two lines, a
+  dish in an existing section needs a description (in a new section it is optional), and a letter
+  the font lacks blocks export. Spelling stays advisory. The room note under a new section updates as
+  you type. Its fields carry no `data-id`, which keeps the baked-field input handler away from them.
 - **Known bug (inherited):** renaming the MAINS heading makes it disappear. Its fieldmap entry
   doesn't match the artwork (y 210 instead of 367). The other headings rename correctly.
 
