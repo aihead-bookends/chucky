@@ -1280,12 +1280,13 @@ function buildItemJS(it, sec, Y){
   const sz=PAGES[sec.page]||[595.276,841.89], W=sz[0], H=sz[1];
   return '\nq\n0 '+jFmt(H)+' '+jFmt(W)+' '+jFmt(-H)+' re\nW n\n'+p.join('\n')+'\nQ\n';
 }
-function appendedForPage(p, removedSlots, growSlots){
-  if(!added.length) return '';
+// where each dish added to a BAKED section on page p sits: [{it, sec, y}], in print order. The PDF
+// (appendedForPage) and the preview's click boxes (pvBoxes) both read this, so they always agree.
+function appendedLayout(p, removedSlots, growSlots){
+  const out=[]; if(!added.length) return out;
   let bySec={};
   // dishes in a NEW section are laid out under its heading by nsForPage, not here
   added.forEach(it=>{ const s=SECTIONS[it.sec]; if(s && !s._new && s.page===p){ (bySec[it.sec]=bySec[it.sec]||[]).push(it); } });
-  let out='';
   for(const si in bySec){
     const sec=SECTIONS[si];
     let shift=0;  // ride the same reflow as the section's items when something above was removed
@@ -1309,11 +1310,14 @@ function appendedForPage(p, removedSlots, growSlots){
       // Report, but still place it: silently dropping a dish the user deliberately added is
       // worse than printing it tight, and ADD behaviour must not change just because growth exists.
       if(_floor!=null && _bottom<_floor+DESC_CLEAR){ try{console.warn('appendedForPage: no room for "'+(it.name||'')+'" below '+(sec.label||sec.col_x)+' — skipped');}catch(_){ } }
-      out += buildItemJS(it,sec,cy);
+      out.push({it, sec, y:cy});
       prevName = 1; prevDesc = addedDescWrap(it.desc,it.grams,sec).lines.filter(Boolean).length;
     }
   }
   return out;
+}
+function appendedForPage(p, removedSlots, growSlots){
+  return appendedLayout(p, removedSlots, growSlots).map(o=>buildItemJS(o.it, o.sec, o.y)).join('');
 }
 
 
@@ -2704,6 +2708,25 @@ function pvBoxes(p){
       right = pr.x + String(pr.text||'').length*(ADV.price||0.63)*(pr.size||8) + 5; }
     out.push({id:n.id, x0:n.x-6, x1:right, top, bot});
   }
+  /* Added dishes and new sections get boxes too, from the same layout the PDF is written with
+     (appendedLayout / nsLayout, fed the same reflow). They had none, so clicking one on the preview
+     did nothing while a baked dish lit up and scrolled to its card. A dish is keyed by its place in
+     `added` (its card carries data-added), a section by its id (data-ns on its card). */
+  const addedBox=(it, sec, Y)=>{
+    const SZ=sec.name_size||11, DDY=(sec.desc_dy!=null?sec.desc_dy:AC.desc_dy), LEAD=AC.desc_leading!=null?AC.desc_leading:-1.385;
+    const dl=addedDescWrap(it.desc, it.grams, sec).lines.filter(Boolean).length;
+    const bot=(dl||it.grams)? Y+DDY+(Math.max(1,dl)-1)*LEAD*AC.desc_size-AC.desc_size*0.35 : Y-5;
+    const right=(sec.price_right_2!=null? sec.price_right_2 : sec.price_right)||(sec.col_x+235);
+    return {id:'added:'+added.indexOf(it), x0:sec.col_x-6, x1:right+5, top:Y+SZ*1.05, bot};
+  };
+  for(const o of appendedLayout(p, st.removedSlots, st.growSlots)) out.push(addedBox(o.it, o.sec, o.y));
+  const L=nsLayout(p, st.removedSlots, st.growSlots);
+  for(const h of L.heads){
+    const title=String(h.ns.title||'').trim(), label=String(h.ns.label||'').trim();
+    const w=nsTitleWidth(title)+(label? NS.LDX+nsLabelWidth(h.ns.after, label)+4 : 0);
+    out.push({id:'ns:'+h.ns.id, x0:h.x-4, x1:h.x+Math.max(40,w)+6, top:h.y+(label? 17 : 13), bot:h.y-4});
+  }
+  for(const o of L.items) out.push(addedBox(o.it, o.sec, o.y));
   return out;
 }
 function pvSync(){
@@ -2718,7 +2741,7 @@ function pvSync(){
     d.style.width = (Math.max(10,b.x1-b.x0)/W*100)+'%';
     d.style.top   = ((H-b.top)/H*100)+'%';
     d.style.height= (Math.max(8,b.top-b.bot)/H*100)+'%';
-    d.title='Click to edit this item';
+    d.title=b.id.startsWith('ns:')? 'Click to edit this section' : 'Click to edit this item';
     d.addEventListener('click',()=>pvJump(b.id));
     hl.appendChild(d);
   }
@@ -2726,11 +2749,15 @@ function pvSync(){
 }
 function pvJump(id){
   _pvSel=id; pvSync();
-  const el=document.querySelector('#editor [data-id="'+(window.CSS&&CSS.escape?CSS.escape(id):id)+'"]');
-  const card=el?el.closest('.card'):null; if(!card) return;
+  const cssEsc=v=>(window.CSS&&CSS.escape? CSS.escape(String(v)) : String(v)), q=sel=>document.querySelector(sel);
+  let el=null, card=null;
+  if(id.startsWith('added:')){ card=q('#editor .addedcard[data-added="'+cssEsc(id.slice(6))+'"]'); el=card&&card.querySelector('.name'); }
+  else if(id.startsWith('ns:')){ card=q('#editor .nscard[data-ns="'+cssEsc(id.slice(3))+'"]'); el=card&&card.querySelector('.secinp'); }
+  else { el=q('#editor [data-id="'+cssEsc(id)+'"]'); card=el? el.closest('.card') : null; }
+  if(!card) return;
   card.scrollIntoView({behavior:'smooth', block:'center'});
   card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash');
-  if(el&&el.isContentEditable) setTimeout(()=>el.focus(),260);
+  if(el&&(el.isContentEditable||el.tagName==='INPUT')) setTimeout(()=>el.focus(),260);
 }
 async function renderPreview(){
   const my = ++renderToken;
@@ -3028,7 +3055,7 @@ function renderAddZone(ed){
 const ADDED_MARKERS=['dairy','gluten','sesame','jain','korea','new'];   // what the add form offers
 function addedCard(a, tagText){
   const sec=SECTIONS[a.sec], isNew=!!sec._new;
-  const card=document.createElement('div'); card.className='card addedcard';
+  const card=document.createElement('div'); card.className='card addedcard'; card.dataset.added=String(added.indexOf(a));   // the preview's click box finds it by this
   const nrow=document.createElement('div'); nrow.className='nrow';
   const tag=document.createElement('span'); tag.className='ac-tag'; tag.textContent=tagText; nrow.appendChild(tag);
   const name=document.createElement('div'); name.className='name'; name.contentEditable='true'; name.spellcheck=false;
@@ -3143,7 +3170,7 @@ function renderNewSections(ed){
     shL.textContent=sec.label; shN.textContent=items.length+' item'+(items.length===1?'':'s');
     sh.append(shL, shN); ed.appendChild(sh);
 
-    const card=document.createElement('div'); card.className='card seccard nscard';
+    const card=document.createElement('div'); card.className='card seccard nscard'; card.dataset.ns=ns.id;   // the preview's click box finds it by this
     const ttl=document.createElement('div'); ttl.className='sectitle'; ttl.textContent='NEW SECTION · UNDER '+A.label; card.appendChild(ttl);
     const metas=[];
     const row=(labelText, key, placeholder, script)=>{

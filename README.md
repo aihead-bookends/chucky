@@ -347,6 +347,8 @@ to the price instead of breaking early.
   dish in an existing section needs a description (in a new section it is optional), and a letter
   the font lacks blocks export. Spelling stays advisory. The room note under a new section updates as
   you type. Its fields carry no `data-id`, which keeps the baked-field input handler away from them.
+  Clicking an added dish, or a new section’s heading, on the preview lights it up and scrolls to its
+  card, as clicking a baked dish does (pvBoxes reads the same layout the PDF is written with).
 - **Known bug (inherited):** renaming the MAINS heading makes it disappear. Its fieldmap entry
   doesn't match the artwork (y 210 instead of 367). The other headings rename correctly.
 
