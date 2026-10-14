@@ -235,6 +235,23 @@ leaves it less room. MARGHERITA has 20 characters a line with its usual 3 marker
 cut down to what does fit, which can look as if the edit did nothing. The card says exactly what
 prints and how to fix it, and Export is paused until the name fits.
 
+**New sections** ("+ Add a new section", e.g. Soups or Dips). A new section goes under the last
+section of a column, in the column's free space above the footer: under SALADS, PASTA SPECIALS or
+DESSERT SPECIALS on the back page, and under either pizza column on the front when a pizza has been
+removed (the right column stops above the add-ons list). Its heading is set like the page's own
+sub-headings (SIDES, SALADS: Loos Compressed Bold, 15pt, red); its dishes are normal added dishes,
+except the description is optional, so a one-line add-on ("GARLIC DIP  90") works, and the first has
+no rule above it. It moves with removals and longer descriptions above it, "+ Add a dish here" and
+the add form stop at the footer, and Export pauses if a loaded menu ever runs into it. Clicking the
+heading or a dish on the preview opens its card. Saved as `newSecs` (only written when there is one).
+
+**Headings can use any letter.** The PDF's Loos Compressed Bold holds 15 glyphs (2 3 8 A C D E I L M
+P R S T Z) and is not a free font. A heading those letters can set (DIPS, SALADS) prints in it; any
+other (SOUPS, BREADS, EXTRAS) prints in Barlow Condensed ExtraBold (`assets/fonts/`, OFL, licence
+beside it), the closest open face, sized to its cap height, and the form says so. The .ttf is
+embedded the first time a heading needs it, so a menu with no such heading exports as before. A
+character neither face has (é) blocks export. See `HEAD` in `capiche/engine.js`.
+
 **Personalised covers** (✨ Personalise). The dialog has an on/off switch. **On:** the handwritten
 motto on the cover strip (15" PIZZA … UNREASONABLE HOSPITALITY) is removed, leaving blank paper, and
 a card for the guest is printed there: the occasion between two red stars, the guest's name with a
@@ -307,6 +324,11 @@ to the price instead of breaking early.
   existing dishes (including an edited weight) and for added ones. So filling a line up to the price
   never pushes the tag into the price column. Tested across 25 description lengths: the tag never
   came closer than 12pt to the prices.
+- **Any letter in a dish.** The text face, Monospace Typewriter, was embedded as a subset with no Q or X
+  in capitals, so XO SAUCE could not be typed. It is a free font (Manfred Klein, `assets/fonts/`,
+  licence beside it), so the full .ttf is swapped in like Geist (`fullfonts.js`): it is monospaced, so
+  every width matches the subset's. Names, descriptions and prices accept whatever it holds, plus the
+  subset's own Ñ and ñ.
 - **Also fixed in Aiko:**
   - The grams box on each dish card had a hard-coded white background; it now matches the editor.
   - The name warning is re-checked when a marker is toggled, and says what actually prints.
@@ -382,6 +404,20 @@ has nothing to edit.
   included, one row down (a removal pulls them up). The footer is only 36pt from the bottom edge, so
   the sheet has room for one more row than it has now. "+ Add item" and "Restore" say when the page is
   full, and Export pauses if a loaded menu ever overflows (`rowsSpare` in `engine.js`).
+- **New sections** ("+ Add a new section", e.g. GELATO or TOPPINGS). A new section is a red heading in
+  the sheet's heading style, the SMALL / MEDIUM / 500GM labels when it has three prices, and its rows,
+  printed in both copies. You pick which section it goes after and which section's prices it copies
+  (three columns like ICE CREAM, or one like CANNOLI). Everything below it moves down by what it
+  takes: a heading is about two rows, then one per item, so creating one needs three spare rows
+  (the full sheet has one; remove two items first). "+ Add item here" stops when the sheet is full,
+  and the row counter under the heading says how many rows are left. Clicking the heading or a row on
+  the preview opens its card (so does clicking any baked row, which had stopped working). Saved as
+  `newSecs` (only written when there is one).
+- **Headings can use any letter.** The sheet's Loos Compressed Bold holds 14 glyphs (space A B C E H I
+  L M N O R S T) and is not a free font. A heading those letters can set (SORBET, CANNOLI) prints in
+  it; any other (GELATO, KULFI) prints in Barlow Condensed ExtraBold (`assets/fonts/`, OFL), the
+  closest open face, sized to its cap height, and the form says so. Embedded the first time a heading
+  needs it.
 
 ## The Aiko drinks menu
 
@@ -405,6 +441,15 @@ adding drinks, soft drinks) it writes the same PDF as the old editor.
   edit after a snapshot also changed the snapshot (History entries, and the menu kept before loading
   the latest).
 - Loading and publishing go through MenuState, as in the other editors.
+- **Any letter, any digit.** The page's one text face, Monospace Typewriter, was a subset of what the
+  artwork used: no X or Q, and no 1, 4, 7, 8 or 9, so a price of 410 or a drink called MEXICAN FIZZ
+  could not even be typed (the fields drop what the font lacks). The full font is swapped in at load
+  (`fullfonts.js`; it is free, see the Aiko menu above), so names, descriptions and prices take
+  anything it holds.
+- **No sections to add here.** The page is a stack of coloured bands with the soft drinks at the
+  bottom; there are no section headings in the design, so "+ Add a new section" does not exist in
+  this editor (the same goes for the two Capiche drinks menus, which are photo grids without
+  headings). New drinks are added as bands.
 
 ## The Capiche Surat drinks menu
 
@@ -504,10 +549,25 @@ Changes from the old editor:
   descriptions keep their punctuation when edited. The old editor refused those characters, and a
   description line holding one printed blank.
 - **Only edited text is checked for characters the fonts can't print.** The check used to run on
-  untouched text too, so the old editor opened with fields marked red and Export blocked. What is
-  still refused: letters the display face lacks (capital H, I, L, O, Q, X, Y, Z and lowercase q, x,
-  z; the Canva export subsets the fonts) and anything no NotoSans face has. Publish refuses the menu
-  while any remain, as the old one did.
+  untouched text too, so the old editor opened with fields marked red and Export blocked. Publish
+  refuses the menu while any remain, as the old one did.
+- **Any letter in a dish.** The Canva export embeds each face as a subset of the letters it used: the
+  name face had no capital H, I, L, O, Q, X, Y or Z, so "Idli" or "Lassi" could not be typed, and
+  the description and heading faces were as short. None of the three (GT America, Söhne, TG Gasoline)
+  is a free font that could be swapped in whole. So text none of the menu's faces can set is set
+  WHOLE in the closest open face instead (`assets/fonts/`, OFL): Barlow Semi Condensed Bold for a
+  name, Barlow Regular for a description, Barlow Condensed ExtraBold for a heading. The card says
+  when a field prints this way ("Set in a close-match name face — this menu's own font has no I"),
+  as a note that doesn't block. Text the menu's own faces can set still uses them, with the NotoSans
+  punctuation fallback above. Each face is embedded the first time a run needs it, in the page
+  artwork's own resources, so an untouched menu exports as before. See `LOOK` in `beshak/engine.js`.
+- **New sections** ("+ Add a new section", e.g. Chaats). A new section is a red heading in the menu's
+  heading style with its rule, and the dishes added to it. It goes under a section of your choice,
+  in that section's column with the most room, below its last dish, and stops above the next heading
+  down or the page's bottom (page 2's bottom is the tiger artwork). This menu is full: every section
+  reads "no room" until a dish is removed, then the heading plus one dish fits under BREADS or
+  DRINKS. Its dishes are ordinary added dishes (same card, same checks). Clicking the heading or a
+  dish on the preview opens its card. Saved as `newSecs` (only written when there is one).
 - Loading and publishing go through MenuState, as for Capiche and Aiko.
 - Edit memory records which PDF edits were made for. It stored a function instead, so edits for an
   older PDF could not be told apart; autosaves from the old editor are shown but not resumed.

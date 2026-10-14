@@ -1584,6 +1584,18 @@ async function boot(){
     document.getElementById('bootmsg').textContent='Loading your menu…';
     pdfBytesOrig=new Uint8Array(await (await fetch(BRAND.pdf+'?v='+Date.now())).arrayBuffer()); memBaseVer='v'+pdfBytesOrig.length;
     doc=await PDFDocument.load(pdfBytesOrig);
+    /* chucky-2: the page's one text face, Monospace Typewriter, is embedded as a subset of the
+       letters the artwork used — no X or Q, no 1, 4, 7, 8 or 9 — so a price like 410, or a drink
+       called MEXICAN FIZZ, could not even be typed (cleanField drops what the font lacks). It is a
+       free font (Manfred Klein, assets/fonts/ with its licence), so the full .ttf is swapped in
+       (assets/js/fullfonts.js): it is monospaced, so every width matches the subset's, which is what
+       FullFonts checks first. Names and descriptions then accept whatever it holds; prices its digits. */
+    try{
+      const full=await FullFonts.embed(doc, { 'MonospaceTypewriter':'/assets/fonts/MonospaceTypewriter.ttf' });
+      if(full.MonospaceTypewriter){ const F=full.MonospaceTypewriter;
+        const U=(a,b)=>[...new Set(String(a||'')+b)].join('');   // the subset's own letters stay allowed too
+        FM.allowed=Object.assign({}, FM.allowed, { name:U(FM.allowed.name,F), desc:U(FM.allowed.desc,F), price:U(FM.allowed.price,F.replace(/[^0-9]/g,'')) }); }
+    }catch(e){ console.warn('Monospace Typewriter: kept the subset', e); }
     for(let p=0;p<doc.getPageCount();p++){ const page=doc.getPage(p); const ref=page.node.get(PDFName.of('Contents')); const stream=doc.context.lookup(ref); pageStreams.push({ref,dict:stream.dict,pristine:stream.contents.slice()}); }
     /* chucky-2: MenuState.boot retries the load, applies a published state only if it was made for
        THIS base PDF, falls back to the menu's starting state (start-state.json — the current menu),

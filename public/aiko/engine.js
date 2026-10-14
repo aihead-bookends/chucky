@@ -3870,7 +3870,18 @@ async function boot(){
     const _subW=(_serif[0]&&_serif[0].widths)||{};
     HEAD_CHARS=(_serif[0]&&_serif[0].charset)||''; HEAD_W=Object.assign({}, _subW);
     try{
-      const full=await FullFonts.embed(doc, { 'Geist-Regular':'/assets/fonts/Geist-SemiBold.ttf' });
+      /* chucky-2: the text face, Monospace Typewriter, is a subset too — no Q or X in capitals, so
+         "XO SAUCE" could not be typed. It is a free font (Manfred Klein, assets/fonts/ with its
+         licence), so the full .ttf is swapped in like Geist: every glyph's width matches the
+         subset's (it is monospaced), which is what FullFonts checks before it swaps a TrueType face.
+         Names, descriptions and prices then accept whatever it holds; prices stay digits-only. */
+      const full=await FullFonts.embed(doc, { 'Geist-Regular':'/assets/fonts/Geist-SemiBold.ttf', 'MonospaceTypewriter':'/assets/fonts/MonospaceTypewriter.ttf' });
+      if(full.MonospaceTypewriter){
+        const F=full.MonospaceTypewriter;
+        // the subset's own letters stay allowed too (its Ñ and ñ are beyond the ASCII FullFonts reports)
+        const U=(a,b)=>[...new Set(String(a||'')+b)].join('');
+        ALLOWED=Object.assign({}, ALLOWED, { name:U(ALLOWED.name,F), desc:U(ALLOWED.desc,F), price:U(ALLOWED.price,F.replace(/[^0-9]/g,'')) });
+      }
       if(full['Geist-Regular']){
         // the subset's own widths win where it has them: FullFonts keeps those in /Widths too
         HEAD_CHARS=full['Geist-Regular']; HEAD_W=Object.assign({}, FullFonts.widths['Geist-Regular'], _subW);

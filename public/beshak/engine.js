@@ -92,6 +92,8 @@ function missingChars(text, fam, noFallback) {
     if (!noFallback && typeof fallbackFams === 'function' && fallbackFams().some((f) => FM.families[f].uni2cid[ch] !== undefined)) continue;
     bad.push(ch);
   }
+  // chucky-2: a run none of the menu's faces can set goes WHOLE to a look-alike face (see LOOK)
+  if (bad.length && !noFallback) { const k = lookKeyFor(fam); if (k && lookCovers(text, k)) return []; }
   return bad;
 }
 
@@ -122,6 +124,9 @@ function resFor(page, fam) {
 function encodeRuns(text, fld) {
   const F = FM.families[famOf(fld)];
   const canFall = !FM.streams[fld.stream] || FM.streams[fld.stream].kind === 'main';
+  // chucky-2: a character none of the menu's faces has sends the WHOLE run to the look-alike face,
+  // a simple font with one byte per character (see LOOK; showRuns sets it)
+  if (canFall) { const k = lookUsed(text, famOf(fld)); if (k) { const res = lookEmbed(k, fld.page); return res ? [{ res, simple: true, text: String(text) }] : null; } }
   const runs = [];
   for (const ch of text) {
     let res = fld.font, c = F.uni2cid[ch];
@@ -145,7 +150,7 @@ function showRuns(fld, o, runs) {
   let cur = start, out = '';
   for (const r of runs) {
     if (r.res !== cur) { out += `${r.res} ${fld.size} Tf `; cur = r.res; }
-    out += showOp(r.cids, fld.kern) + ' ';
+    out += (r.simple ? '(' + escPdf(r.text) + ')Tj' : showOp(r.cids, fld.kern)) + ' ';
   }
   if (cur !== start) out += `${start} ${fld.size} Tf`;
   return out.trim();
@@ -160,6 +165,7 @@ function glyphW(fam, ch) {
 }
 
 function textWidth(text, fam, size, kern) {
+  { const k = lookUsed(text, fam); if (k) return lookWidth(text, k, size); }   // chucky-2: set in the look-alike face
   let w = 0, n = 0;
   for (const ch of text) {
     w += glyphW(fam, ch);   // chucky-2: fallback glyphs measure as the face that sets them
@@ -303,10 +309,12 @@ async function regenerate() {
 
   // ---- added dishes ----
   for (const a of added) {
-    const c = FM.columns.find((x) => x.id === a.col);
+    const c = colById(a.col);
     if (!c) continue;
-    append('p' + c.page, addedDishOps(a, c));
+    append('p' + c.page, addedDishOps(a, c, c._ns ? nsDishY(a, c) : undefined));
   }
+  // ---- new sections: their headings and rules (their dishes went above) ----
+  for (const sid of Object.keys(PRISTINE)) if (/^p\d+$/.test(sid)) { const t = nsOps(+sid.slice(1)); if (t) append(sid, t); }
 
   // ---- write every stream back ----
   for (const sid of Object.keys(PRISTINE)) {
@@ -384,15 +392,15 @@ function textBlock(fontRes, size, x, y, show) {
   return `q\n10 0 0 10 0 0 cm BT\n${fontRes} ${size} Tf\n1 0 0 1 ${r2(x)} ${r2(y)} Tm\n${show}\nET\nQ\n`;
 }
 
-/** Ops for a dish the user added at the bottom of a column. */
-function addedDishOps(a, c) {
+/** Ops for a dish the user added at the bottom of a column — or, with `y0`, under a new section's heading. */
+function addedDishOps(a, c, y0) {
   const last = byId[c.ids[c.ids.length - 1]];
   const liveIds = c.ids.filter((id) => !removed.includes(id));
   const bottomId = liveIds.length ? liveIds[liveIds.length - 1] : null;
   const bottom = bottomId ? byId[bottomId] : last;
   const bDesc = (kidsOf[bottom.id] || {}).desc;
   const dy = -(bottom.slot || c.pitch) * (a.index || 1);
-  const y = r2(bottom.y + dy);
+  const y = y0 != null ? r2(y0) : r2(bottom.y + dy);
   const fam = { name: FM.res_to_family[c.page + last.font], desc: bDesc ? famOf(bDesc) : FM.families.desc };
   let out = '';
 
@@ -427,6 +435,262 @@ function addedDishOps(a, c) {
     mx += FM.icons[t].w / ART + FM.marker_gap;
   }
   return out;
+}
+
+
+/* ============================================================ look-alike faces
+   chucky-2: THE MENU'S FONTS ARE SUBSETS, AND NOT FREE. The name face (GT America Condensed Bold)
+   is embedded with only the letters the artwork uses — no H, I, L, O, Q, X, Y or Z in capitals — so
+   "Idli" or "Lassi" could not be typed, the description face (Söhne Buch) and the heading face
+   (TG Gasoline) likewise, and none of the three can be bought and swapped in the way Geist is for
+   Aiko. So text none of the menu's faces can set is set WHOLE in the closest open face instead
+   (OFL, assets/fonts/): Barlow Semi Condensed Bold for a name, Barlow Regular for a description,
+   Barlow Condensed ExtraBold for a heading. A run the menu's own faces can set still uses them
+   (with the NotoSans punctuation fallback the artwork itself uses). The .ttf is embedded whole the
+   first time a run needs it, as a simple WinAnsi TrueType font in the page artwork's own resources,
+   so an untouched menu exports exactly as before. The editor says when a field is set this way. */
+const LOOK = {
+  name: { url: '/assets/fonts/BarlowSemiCondensed-Bold.ttf', ps: 'BarlowSemiCondensed-Bold', res: 'CkName', fams: ['GTAmericaTrial-CmBd', 'GTAmericaTrial-CmRg'], label: 'a close-match name face' },
+  desc: { url: '/assets/fonts/Barlow-Regular.ttf', ps: 'Barlow-Regular', res: 'CkDesc', fams: ['TestSohne-Buch'], label: 'a close-match text face' },
+  head: { url: '/assets/fonts/BarlowCondensed-ExtraBold.ttf', ps: 'BarlowCondensed-ExtraBold', res: 'CkHead', fams: ['TGGasolineRegular'], label: 'a close-match heading face' },
+};
+function lookKeyFor(fam) { for (const k of Object.keys(LOOK)) if (LOOK[k].fams.includes(fam)) return k; return null; }
+async function lookLoadFonts() {
+  await Promise.all(Object.keys(LOOK).map(async (k) => {
+    const L = LOOK[k];
+    try {
+      const r = await fetch(L.url); if (!r.ok) throw new Error('HTTP ' + r.status);
+      const buf = await r.arrayBuffer(), P = FullFonts.parseOtf(buf); if (!P.ttf) throw new Error('not a TrueType font');
+      const b = new DataView(buf), u8 = new Uint8Array(buf), T = {}, tag = (o) => String.fromCharCode(u8[o], u8[o + 1], u8[o + 2], u8[o + 3]);
+      for (let i = 0, n = b.getUint16(4); i < n; i++) { const o = 12 + 16 * i; T[tag(o)] = b.getUint32(o + 8); }
+      const upm = b.getUint16(T.head + 18), sc = (v) => Math.round(v * 1000 / upm);
+      const widths = [], W = {}; let chars = '';
+      for (let c = 32; c <= 126; c++) { const g = P.cmap.get(c), w = g ? P.width(g) : 0; widths.push(w); if (g) { const ch = String.fromCharCode(c); W[ch] = w; chars += ch; } }
+      L.data = { ttf: P.ttf, widths, bbox: [36, 38, 40, 42].map((o) => sc(b.getInt16(T.head + o))), asc: sc(b.getInt16(T.hhea + 4)), desc: sc(b.getInt16(T.hhea + 6)), capU: sc(upm * 0.7) };
+      L.chars = chars; L.widths = W; L.ok = true;
+    } catch (e) { console.warn('look-alike face ' + k + ': text keeps the menu’s own letters', e); }
+  }));
+}
+/** The resource name of look-alike `key` on page `page`'s artwork, embedding it there the first time. */
+function lookEmbed(key, page) {
+  const L = LOOK[key]; if (!L || !L.ok) return null;
+  const ctx = pdfDoc.context;
+  if (!L.ref) {
+    const d = L.data;
+    const file = ctx.register(PDFRawStream.of(ctx.obj({ Length: d.ttf.length, Length1: d.ttf.length }), d.ttf));
+    const fd = ctx.register(ctx.obj({ Type: 'FontDescriptor', FontName: L.ps, Flags: 32, FontBBox: d.bbox, ItalicAngle: 0, Ascent: d.asc, Descent: d.desc, CapHeight: d.capU, StemV: 100, FontFile2: file }));
+    L.ref = ctx.register(ctx.obj({ Type: 'Font', Subtype: 'TrueType', BaseFont: L.ps, FirstChar: 32, LastChar: 126, Widths: d.widths, Encoding: 'WinAnsiEncoding', FontDescriptor: fd }));
+  }
+  const dict = STREAM_DICT['p' + page]; if (!dict) return null;
+  let res = dict.lookup(PDFName.of('Resources'));
+  if (!res) { res = ctx.obj({}); dict.set(PDFName.of('Resources'), res); }
+  let fonts = res.lookup(PDFName.of('Font'));
+  if (!fonts) { fonts = ctx.obj({}); res.set(PDFName.of('Font'), fonts); }
+  if (!fonts.has(PDFName.of(L.res))) fonts.set(PDFName.of(L.res), L.ref);
+  return '/' + L.res;
+}
+const lookCovers = (text, key) => !!(LOOK[key] && LOOK[key].ok) && [...String(text || '')].every((c) => LOOK[key].chars.indexOf(c) >= 0);
+/** The characters `fam` (with the NotoSans fallbacks) cannot set — what sends a run to the look-alike. */
+function lookMissing(text, fam, noFallback) {
+  const F = FM.families[fam]; if (!F) return [];
+  const out = [];
+  for (const ch of String(text || '')) {
+    if (F.uni2cid[ch] !== undefined || out.includes(ch)) continue;
+    if (!noFallback && fallbackFams().some((f) => FM.families[f].uni2cid[ch] !== undefined)) continue;
+    out.push(ch);
+  }
+  return out;
+}
+/** Which look-alike sets this text, or null when the menu's own faces can (or none can). */
+function lookUsed(text, fam, noFallback) {
+  if (noFallback || !lookMissing(text, fam).length) return null;
+  const k = lookKeyFor(fam);
+  return k && lookCovers(text, k) ? k : null;
+}
+function lookWidth(text, key, size) { const L = LOOK[key]; let w = 0; for (const ch of String(text || '')) w += (L.widths[ch] != null ? L.widths[ch] : 500); return w / 1000 * size; }
+
+/* ============================================================ new sections
+   A section the artwork never had ("SOUPS", "CHAATS") — a red heading in the menu's heading style,
+   its rule, and the dishes added to it — stacked under a baked section, in the column of that
+   section with the most room: below its last live dish (and any dish added to it), above the next
+   heading down or the page's own bottom (page 2's bottom is the tiger artwork). Its dishes are
+   ordinary added dishes whose column is the section's synthetic one ('ns:<id>', see nsCol), so
+   addedDishOps, the cards, the issues and the saved state handle them unchanged. Position is never
+   stored: it is laid out on every pass, so it follows removals above it.
+   The heading is set in TG Gasoline when its subset has the letters (A B D E M R S and a few
+   lowercase), else in the look-alike heading face (see LOOK). */
+let newSecs = [];   // [{id, col, title}]: col = the baked column it goes under
+const NS = { SIZE: 25.5621, HX: 2, ABOVE: 3, FIRST: 25.5, RULE_DY: -8.4, RULE_W: 15.0057, GAP: 10, INK: 12, FLOOR: { 0: 34, 1: 345 } };
+// the page's own bottom edge for a column: a margin on page 1, the tiger artwork's top on page 2
+function nsCol(ns) {
+  const c = FM.columns.find((x) => x.id === ns.col); if (!c) return null;
+  return { id: 'ns:' + ns.id, page: c.page, section: String(ns.title || ''), x: c.x, width: c.width, pitch: c.pitch, ids: c.ids, bottom: c.bottom, _ns: ns, _tpl: c };
+}
+const nsCols = () => newSecs.map(nsCol).filter(Boolean);
+const colById = (id) => FM.columns.find((c) => c.id === id) || nsCols().find((c) => c.id === id);
+/** The slot the next dish under baked column c would take: below its live dishes and the dishes added to it. */
+function colNextY(c) {
+  const liveIds = c.ids.filter((id) => !removed.includes(id));
+  const bottom = byId[liveIds.length ? liveIds[liveIds.length - 1] : c.ids[c.ids.length - 1]];
+  const n = added.filter((a) => a.col === c.id).length;
+  return bottom.y - (bottom.slot || c.pitch) * (n + 1);
+}
+/** What the column must stay above: the next heading down that shares its x range, else the page's bottom. */
+function nsFloor(c) {
+  let f = NS.FLOOR[c.page] != null ? NS.FLOOR[c.page] : 34;
+  for (const s of FM.sections) if (s.page === c.page && s.y < c.bottom && s.x1 > c.x && s.x0 < c.x + c.width) f = Math.max(f, s.y + 30);
+  return f;
+}
+/** Every new section's place: heading baseline, first dish, pitch, and the room left under it. */
+function nsLayout() {
+  const out = [], used = {};
+  for (const ns of newSecs) {
+    const c = FM.columns.find((x) => x.id === ns.col); if (!c) continue;
+    const sc = nsCol(ns), slot = (byId[c.ids[c.ids.length - 1]] || {}).slot || c.pitch;
+    const top = colNextY(c) - (used[c.id] || 0), hy = top - NS.ABOVE;
+    const n = added.filter((a) => a.col === sc.id).length;
+    const firstY = hy - NS.FIRST, ink = n ? firstY - slot * (n - 1) - slot + NS.INK : hy - NS.INK;
+    used[c.id] = (used[c.id] || 0) + (top - ink) + NS.GAP;
+    out.push({ ns, sc, c, page: c.page, hy, firstY, slot, n, ink, room: ink - nsFloor(c) });
+  }
+  return out;
+}
+const nsEntry = (ns) => nsLayout().find((e) => e.ns === ns);
+const headText = (t) => String(t || '').replace(/\s+/g, ' ').toUpperCase().trim();
+/** How a title prints: the menu's Gasoline when it has every letter, else the look-alike heading face. */
+function nsTitleFace(title) {
+  const t = headText(title);
+  if (t && toCids(t, 'TGGasolineRegular')) return { fam: 'TGGasolineRegular' };
+  if (t && lookCovers(t, 'head')) return { look: 'head' };
+  return null;
+}
+function nsTitleWidth(title) {
+  const t = headText(title), f = nsTitleFace(t); if (!f) return 0;
+  return f.fam ? textWidth(t, f.fam, NS.SIZE, 0.1) : lookWidth(t, 'head', NS.SIZE);
+}
+function nsTitleProblem(ns, c) {
+  const t = headText(ns.title); c = c || FM.columns.find((x) => x.id === ns.col);
+  if (!t) return { msg: 'give the section a name' };
+  if (!nsTitleFace(t)) { const bad = [...new Set([...t].filter((ch) => !(LOOK.head.chars || '').includes(ch) && !FM.families.TGGasolineRegular.uni2cid[ch]))]; return { kind: 'char', msg: 'can’t print: ' + bad.map((x) => (x === ' ' ? 'space' : '“' + x + '”')).join(', ') }; }
+  const w = nsTitleWidth(t); if (c && w > c.width) return { msg: 'too wide for the column — ' + w.toFixed(0) + 'pt of ' + c.width.toFixed(0) + 'pt' };
+  return null;
+}
+const nsTitleOk = (ns) => { const f = nsTitleFace(ns.title); return f && f.look ? '✓ prints in red — a close match to the menu’s heading face' : '✓ prints in the menu’s heading face'; };
+/** The heading and its rule, for one new section, in the page artwork's units. */
+function nsHeadOps(e) {
+  const t = headText(e.ns.title), f = nsTitleFace(t); if (!f) return '';
+  const x = e.c.x + NS.HX, kern = 0.1;
+  let show, res;
+  if (f.fam) { res = resFor(e.page, f.fam); show = showOp(toCids(t, f.fam), kern); }
+  else { res = lookEmbed('head', e.page); show = '(' + escPdf(t) + ')Tj'; }
+  if (!res) return '';
+  const K = String(FM.brand_k).replace(/ k$/, ' K'), ry = e.hy + NS.RULE_DY;
+  return 'q ' + FM.brand_k + '\n' + textBlock(res, NS.SIZE, x, e.hy, show)
+    + 'q ' + K + ' ' + NS.RULE_W + ' w 4 M ' + r2(e.c.x * ART) + ' ' + r2(ry * ART) + ' m ' + r2((e.c.x + e.c.width) * ART) + ' ' + r2(ry * ART) + ' l S Q\nQ\n';
+}
+function nsOps(page) { let s = ''; for (const e of nsLayout()) if (e.page === page) s += nsHeadOps(e); return s; }
+/** Where added dish `a` of a new section's column sits (its slot under the heading). */
+function nsDishY(a, sc) { const e = nsEntry(sc._ns); return e ? e.firstY - e.slot * ((a.index || 1) - 1) : null; }
+function nsRoomNote(e) {
+  if (!e) return '';
+  if (e.room < 0) return 'Doesn’t fit: runs ' + (-e.room).toFixed(0) + 'pt into what’s below. Remove a dish, or shorten a description above.';
+  const more = Math.floor(e.room / e.slot);
+  return more ? 'Room for about ' + more + ' more dish' + (more === 1 ? '' : 'es') + '.' : 'No room for another dish here.';
+}
+function nsRemove(ns) {
+  const sc = nsCol(ns); if (sc) added = added.filter((a) => a.col !== sc.id);
+  newSecs = newSecs.filter((x) => x !== ns);
+}
+function nsAddItem(ns) {
+  const sc = nsCol(ns); if (!sc) return;
+  const n = added.filter((a) => a.col === sc.id).length + 1;
+  added.push({ col: sc.id, index: n, name: 'New item', desc: '', price: '', gram: '', markers: [] });
+  buildEditor(); onChange();
+}
+function renderNewSections(host) {
+  const L = nsLayout();
+  for (const ns of newSecs) {
+    const e = L.find((x) => x.ns === ns); if (!e || e.page !== activePage) continue;
+    const sc = e.sc, items = added.filter((a) => a.col === sc.id), title = headText(ns.title) || 'NEW SECTION';
+    const wrap = document.createElement('div');
+    wrap.className = 'secgrp';
+    wrap.innerHTML = `<h2 class="sechd" id="sec-ns-${esc(ns.id)}">${esc(title)}<span class="cnt">${items.length}</span></h2>`;
+    const card = document.createElement('article');
+    card.className = 'card nscard added';
+    card.dataset.id = 'ns:' + ns.id;   // what pvJump looks the card up by
+    card.innerHTML = `<div class="chead"><span class="cnum">New section · under ${esc(e.c.section)}</span></div>`;
+    const del = document.createElement('button');
+    del.className = 'cdel'; del.textContent = '✕'; del.title = 'Remove this section';
+    del.onclick = () => { if (items.length && !confirm('Remove the section “' + title + '” and its ' + items.length + ' dish' + (items.length === 1 ? '' : 'es') + '?')) return; nsRemove(ns); buildEditor(); onChange(); };
+    card.querySelector('.chead').appendChild(del);
+    const row = document.createElement('label');
+    row.className = 'frow';
+    row.innerHTML = `<span class="flbl">Name</span>`;
+    const input = document.createElement('input');
+    input.value = ns.title || ''; input.placeholder = 'Soups'; input.maxLength = 24; input.className = 'secinp';
+    const note = document.createElement('span'); note.className = 'fnote';
+    const check = () => { const pr = nsTitleProblem(ns, e.c); row.classList.toggle('bad', !!(pr && pr.kind === 'char')); row.classList.toggle('warn', !!(pr && pr.kind !== 'char')); input.classList.toggle('badglyph', !!(pr && pr.kind === 'char')); input.classList.toggle('nsbad', !!(pr && pr.kind !== 'char')); note.textContent = pr ? pr.msg : nsTitleOk(ns); };
+    input.oninput = () => { ns.title = input.value; wrap.querySelector('h2').firstChild.textContent = headText(ns.title) || 'NEW SECTION'; check(); onChange(); };
+    row.appendChild(input); row.appendChild(note); card.appendChild(row); check();
+    const rn = document.createElement('div'); rn.className = 'addnote'; rn.textContent = nsRoomNote(e); if (e.room < 0) rn.classList.add('nsbad');
+    card.appendChild(rn);
+    wrap.appendChild(card);
+    for (const a of items) wrap.appendChild(addedCard(a));
+    const addBtn = document.createElement('button');
+    addBtn.className = 'additem'; addBtn.textContent = '+ Add item to ' + title;
+    addBtn.onclick = () => nsAddItem(ns);
+    wrap.appendChild(addBtn);
+    host.appendChild(wrap);
+  }
+}
+/** The baked column under which a new section for `section` would go: the one with the most room. */
+function nsAnchorCol(section) {
+  const cols = FM.columns.filter((c) => c.page === activePage && c.section === section);
+  if (!cols.length) return null;
+  const used = {}; for (const e of nsLayout()) used[e.c.id] = (used[e.c.id] || 0) + (e.ink - e.hy + NS.ABOVE) + NS.GAP + NS.INK;
+  return cols.slice().sort((a, b) => (colNextY(b) - (used[b.id] || 0) - nsFloor(b)) - (colNextY(a) - (used[a.id] || 0) - nsFloor(a)))[0];
+}
+/** Room (pt) a new section with one dish would have under `section` right now. */
+function nsRoomFor(section) {
+  const c = nsAnchorCol(section); if (!c) return -1;
+  const tmp = { id: '_tmp', col: c.id, title: 'X' };
+  newSecs.push(tmp); added.push({ col: 'ns:_tmp', index: 1, name: 'X', desc: '', price: '', gram: '', markers: [] });
+  try { const e = nsEntry(tmp); return e ? e.room : -1; }
+  finally { added.pop(); newSecs.pop(); }
+}
+function renderAddSectionZone(host) {
+  const sections = sectionsForPage(activePage); if (!sections.length) return;
+  const zone = document.createElement('div'); zone.className = 'addzone nszone';
+  const btn = document.createElement('button'); btn.className = 'additem'; btn.textContent = '+ Add a new section';
+  const form = document.createElement('div'); form.className = 'addform';
+  const rooms = sections.map(nsRoomFor), anyRoom = rooms.some((r) => r >= 0);
+  form.innerHTML = '<label>Section name</label><input type="text" class="ns-title" maxlength="24" placeholder="Soups">'
+    + '<div class="afmeta ns-tmeta"></div>'
+    + '<label>Goes under</label><select class="af-sec ns-where">' + sections.map((s, i) => '<option value="' + esc(s) + '"' + (rooms[i] < 0 ? ' disabled' : '') + '>' + esc(s) + (rooms[i] < 0 ? ' · no room' : '') + '</option>').join('') + '</select>'
+    + '<div class="afmeta ns-wmeta"></div>'
+    + '<div class="afbtns"><button class="afadd">Create section</button><button class="afcancel">Cancel</button></div>';
+  btn.onclick = () => { form.classList.toggle('open'); if (form.classList.contains('open')) form.querySelector('.ns-title').focus(); };
+  zone.append(btn, form); host.appendChild(zone);
+  const tEl = form.querySelector('.ns-title'), wEl = form.querySelector('.ns-where'), tm = form.querySelector('.ns-tmeta'), wm = form.querySelector('.ns-wmeta'), go = form.querySelector('.afadd');
+  const first = rooms.findIndex((r) => r >= 0); if (first >= 0) wEl.value = sections[first];
+  const validate = () => {
+    const c = nsAnchorCol(wEl.value), ns = { title: tEl.value.trim() }, tp = nsTitleProblem(ns, c);
+    tm.textContent = tp ? tp.msg : nsTitleOk(ns); tm.classList.toggle('bad', !!(tp && ns.title));
+    if (!ns.title) tm.textContent = 'e.g. Soups, Chaats, Sharing Plates';
+    wm.textContent = anyRoom ? 'It goes under that section’s last dish, in the column with the most room.' : 'No free space on this page — remove a dish first, or add the section on the other page.';
+    wm.classList.toggle('bad', !anyRoom);
+    go.disabled = !anyRoom || !!tp || !c;
+  };
+  tEl.oninput = wEl.onchange = validate; validate();
+  form.querySelector('.afcancel').onclick = () => form.classList.remove('open');
+  go.onclick = () => {
+    if (go.disabled) return;
+    const c = nsAnchorCol(wEl.value); if (!c) return;
+    const ns = { id: 's' + Date.now().toString(36), col: c.id, title: tEl.value.trim() };
+    newSecs.push(ns);
+    nsAddItem(ns);   // straight into its first dish (nsAddItem rebuilds and saves)
+    const card = document.querySelector('#editor .nscard[data-id="ns:' + ns.id + '"]'); if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
 }
 
 // ============================================================ stream plumbing
@@ -482,14 +746,17 @@ const curText = (f) => (edits[f.id] !== undefined ? edits[f.id] : f.display);
 const memBaseVer = () => 'v' + (pdfBytesOrig ? pdfBytesOrig.length : 0);
 
 function memSnapshot() {
-  return { qr: QRK.snap(), edits: JSON.parse(JSON.stringify(edits)), removed: removed.slice(), added: JSON.parse(JSON.stringify(added)), markerEdits: JSON.parse(JSON.stringify(markerEdits)) };
+  const s = { qr: QRK.snap(), edits: JSON.parse(JSON.stringify(edits)), removed: removed.slice(), added: JSON.parse(JSON.stringify(added)), markerEdits: JSON.parse(JSON.stringify(markerEdits)) };
+  if (newSecs.length) s.newSecs = JSON.parse(JSON.stringify(newSecs));   // only when there is one: older menus snapshot as they did
+  return s;
 }
 function memApply(s) {
   QRK.load(s && s.qr);
   for (const k of Object.keys(edits)) delete edits[k];
   Object.assign(edits, s.edits || {});
   removed = s.removed || [];
-  added = s.added || [];
+  newSecs = (Array.isArray(s.newSecs) ? s.newSecs : []).filter((ns) => ns && FM.columns.some((c) => c.id === ns.col)).map((ns) => ({ id: String(ns.id), col: String(ns.col), title: String(ns.title || '') }));
+  added = (s.added || []).filter((a) => colById(a.col));   // a dish whose section is gone goes with it
   markerEdits = s.markerEdits || {};
 }
 function memRebuild() { buildEditor(); schedulePreview(); }
@@ -518,6 +785,7 @@ function fieldIssues(f) {
   const bad = edits[f.id] !== undefined ? missingChars(val, famOf(f), f.role === 'gram') : [];
   const out = [];
   if (bad.length) out.push({ kind: 'char', msg: 'This menu’s font has no ' + bad.map((c) => (c === ' ' ? 'space' : '“' + c + '”')).join(', ') });
+  else if (edits[f.id] !== undefined) { const k = lookUsed(val, famOf(f), f.role === 'gram'); if (k) out.push({ kind: 'look', msg: 'Set in ' + LOOK[k].label + ' — this menu’s own font has no ' + lookMissing(val, famOf(f)).map((c) => (c === ' ' ? 'space' : '“' + c + '”')).join(', ') }); }
   if (role === 'price' && !/^\d+$/.test(val.trim())) out.push({ kind: 'char', msg: 'Prices are digits only' });
   if (edits[f.id] !== undefined && (role === 'name' || role === 'desc')) {
     const t = typosIn(val);
@@ -536,11 +804,12 @@ function addedIssues(a) {
   const check = (label, text, fam, noFallback) => {
     const bad = missingChars(text || '', fam, noFallback);
     if (bad.length) out.push({ kind: 'char', msg: label + ': this menu’s font has no ' + bad.map((c) => (c === ' ' ? 'space' : '“' + c + '”')).join(', ') });
+    else { const k = lookUsed(text || '', fam, noFallback); if (k) out.push({ kind: 'look', msg: label + ': set in ' + LOOK[k].label + ' — this menu’s own font has no ' + lookMissing(text || '', fam).map((c) => (c === ' ' ? 'space' : '“' + c + '”')).join(', ') }); }
   };
   check('Name', a.name, FM.res_to_family[nameFamKeyFor(a)]);
   check('Size', a.gram, FM.res_to_family[nameFamKeyFor(a)], true);   // chucky-2: a size is set without fallback glyphs
   check('Price', a.price, FM.res_to_family[nameFamKeyFor(a)]);
-  const dcol = FM.columns.find((c) => c.id === a.col);
+  const dcol = colById(a.col);
   const dref = dcol && FM.fields.find((f) => f.role === 'desc' && f.of === dcol.ids[0]);
   if (dref) check('Description', a.desc, famOf(dref));
   if (a.price && !/^\d*$/.test(String(a.price).trim())) out.push({ kind: 'char', msg: 'Price: digits only' });
@@ -549,7 +818,7 @@ function addedIssues(a) {
 }
 /** The display face used by a column, keyed the way res_to_family expects. */
 function nameFamKeyFor(a) {
-  const c = FM.columns.find((x) => x.id === a.col);
+  const c = colById(a.col);
   const ref = c && byId[c.ids[c.ids.length - 1]];
   return ref ? ref.page + ref.font : 0 + '/R45';
 }
@@ -596,8 +865,7 @@ function buildEditor() {
   for (const section of sectionsForPage(activePage)) {
     const dishes = dishesIn(activePage, section);
     const live = dishes.filter((d) => !removed.includes(d.id));
-    const addedHere = added.filter((a) => (FM.columns.find((c) => c.id === a.col) || {}).section === section
-      && (FM.columns.find((c) => c.id === a.col) || {}).page === activePage);
+    const addedHere = added.filter((a) => { const c = colById(a.col); return c && !c._ns && c.section === section && c.page === activePage; });
     const wrap = document.createElement('div');
     wrap.className = 'secgrp';
     wrap.innerHTML = `<h2 class="sechd" id="sec-${esc(section)}">${esc(section)}<span class="cnt">${live.length + addedHere.length}</span></h2>`;
@@ -610,6 +878,8 @@ function buildEditor() {
     wrap.appendChild(addBtn);
     host.appendChild(wrap);
   }
+  renderNewSections(host);
+  renderAddSectionZone(host);
   syncRail();
   syncFlagPill();
 }
@@ -767,12 +1037,20 @@ function syncRail() {
   rail.querySelectorAll('.sec').forEach((n) => n.remove());
   for (const s of sectionsForPage(activePage)) {
     const live = dishesIn(activePage, s).filter((d) => !removed.includes(d.id)).length
-      + added.filter((a) => (FM.columns.find((c) => c.id === a.col) || {}).section === s).length;
+      + added.filter((a) => { const c = colById(a.col); return c && !c._ns && c.section === s; }).length;
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'sec';   // chucky-2: the shell's section button (was .railsec, styled by the old page)
     b.innerHTML = `<span>${esc(s)}</span><span class="ct">${live}</span>`;
     b.onclick = () => { const el = document.getElementById('sec-' + s); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+    rail.appendChild(b);
+  }
+  for (const e of nsLayout()) {   // the new sections on this page, after the baked ones
+    if (e.page !== activePage) continue;
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'sec';
+    b.innerHTML = `<span>${esc(headText(e.ns.title) || 'NEW SECTION')}</span><span class="ct">${added.filter((a) => a.col === e.sc.id).length}</span>`;
+    b.onclick = () => { const el = document.getElementById('sec-ns-' + e.ns.id); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
     rail.appendChild(b);
   }
   rail.querySelectorAll('.tabs button').forEach((b) => { b.classList.toggle('on', +b.dataset.pg === activePage); b.setAttribute('aria-selected', +b.dataset.pg === activePage); });
@@ -1920,13 +2198,14 @@ function pvBoxes(page) {
   }
   // dishes the user added sit below the last live dish of their column (see addedDishOps)
   added.forEach((a, i) => {
-    const c = FM.columns.find((x) => x.id === a.col);
+    const c = colById(a.col);
     if (!c || c.page !== page) return;
     const liveIds = c.ids.filter((id) => !removed.includes(id));
     const bottom = byId[liveIds.length ? liveIds[liveIds.length - 1] : c.ids[c.ids.length - 1]];
     if (!bottom) return;
     const k = kidsOf[bottom.id] || {};
-    const y = bottom.y - (bottom.slot || c.pitch) * (a.index || 1);
+    const y = c._ns ? nsDishY(a, c) : bottom.y - (bottom.slot || c.pitch) * (a.index || 1);
+    if (y == null) return;
     const top = y + (bottom.size || 14) * 0.95;
     let bot = y - 5;
     let x1 = c.x + textWidth(a.name || '', famOf(bottom), bottom.size, bottom.kern);
@@ -1941,6 +2220,10 @@ function pvBoxes(page) {
     }
     out.push({ id: 'add:' + i, x0: c.x - 5, x1: x1 + 4, top, bot });
   });
+  for (const e of nsLayout()) {   // the new sections' headings (their cards carry data-id "ns:<id>")
+    if (e.page !== page) continue;
+    out.push({ id: 'ns:' + e.ns.id, x0: e.c.x - 5, x1: e.c.x + Math.min(e.c.width, Math.max(40, nsTitleWidth(e.ns.title)) + 10), top: e.hy + NS.SIZE * 0.75, bot: e.hy + NS.RULE_DY - 3 });
+  }
   return out;
 }
 
@@ -1960,7 +2243,7 @@ function pvSync() {
     d.style.width = (Math.max(10, b.x1 - b.x0) / W * 100) + '%';
     d.style.top = ((H - b.top) / H * 100) + '%';
     d.style.height = (Math.max(8, b.top - b.bot) / H * 100) + '%';
-    d.title = 'Click to edit this item';
+    d.title = String(b.id).startsWith('ns:') ? 'Click to edit this section' : 'Click to edit this item';
     d.addEventListener('click', () => pvJump(b.id));
     hl.appendChild(d);
   }
@@ -2123,6 +2406,8 @@ async function boot() {
   msg('Opening the artwork…');
   pdfDoc = await PDFDocument.load(pdfBytesOrig, { updateMetadata: false });
   loadStreams();
+  msg('Loading fonts…');
+  await lookLoadFonts();             // chucky-2: the look-alike faces for letters the menu's subsets lack (see LOOK)
 
   msg('Checking for a published menu…');
   /* chucky-2: MenuState.boot retries the load, applies a published state only if it was made for

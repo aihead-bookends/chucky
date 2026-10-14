@@ -753,6 +753,7 @@ let _growSig=null, _growCache={};
 function growSig(){
   return JSON.stringify([Object.keys(edits).sort().map(k=>k+'\u0001'+edits[k]),
     [...removed].sort(), (typeof added!=='undefined'&&added)?added:0,
+    (typeof newSecs!=='undefined')?newSecs:0,
     (typeof order!=='undefined')?order:0,
     (typeof markerEdits!=='undefined'&&markerEdits)?Object.keys(markerEdits).sort().map(k=>k+'\u0001'+markerEdits[k]):0]);
 }
@@ -766,8 +767,10 @@ function growPlan(p){
        added must never be pushed off the page by a description that merely wants to be roomier. */
     if(typeof added!=='undefined'&&added.length&&typeof SECTIONS!=='undefined'&&SECTIONS){
       for(const it of added){ const sec=SECTIONS[it.sec];
-        if(sec&&sec.page===p&&sec.col_x>=col.min&&sec.col_x<col.max) remaining-=(sec.slot||33); }
+        if(sec&&!sec._new&&sec.page===p&&sec.col_x>=col.min&&sec.col_x<col.max) remaining-=(sec.slot||33); }
     }
+    // ...and so do new sections, heading and dishes (their dishes are not charged above)
+    if(typeof nsSpend==='function') remaining-=nsSpend(p,col);
     remaining=Math.max(0,remaining);
     /* NAMES ASK FIRST. A name that will not fit is a hard stop for the user — the text simply
        disappears — whereas a description can shrink its way out of trouble, so the name gets the
@@ -1834,15 +1837,17 @@ function buildItemJS(it, sec, Y){
     const dx=(d.x!=null)?d.x:parseFloat(d.xs), dw=(d.w!=null)?d.w:parseFloat(d.ws);
     return Math.abs(d.y-_ry)<3 && NX>=dx-8 && NX<=dx+dw+8;
   });
-  if(!_dupRule) p.push('0.727 0.668 0.652 0.813 K\n0.464 w\nq 1 0 0 1 '+jFmt(NX)+' '+jFmt(_ry)+' cm\n0 0 m\n'+jFmt(sec.divider_w)+' 0 l\nS\nQ');
+  if(!_dupRule && sec.divider_w>0) p.push('0.727 0.668 0.652 0.813 K\n0.464 w\nq 1 0 0 1 '+jFmt(NX)+' '+jFmt(_ry)+' cm\n0 0 m\n'+jFmt(sec.divider_w)+' 0 l\nS\nQ');
   const sz=PAGES[sec.page]||[841.89,595.276], W=sz[0], H=sz[1];
   return '\nq\n0 '+jFmt(H)+' '+jFmt(W)+' '+jFmt(-H)+' re\nW n\n'+p.join('\n')+'\nQ\n';
 }
-function appendedForPage(p, removedSlots, growSlots){
-  if(!added.length) return '';
+// where each dish added to a BAKED section on page p sits: [{it, sec, y}], in print order. The PDF
+// (appendedForPage) and the preview's click boxes (pvBoxes) both read this, so they always agree.
+function appendedLayout(p, removedSlots, growSlots){
+  const out=[]; if(!added.length) return out;
   let bySec={};
-  added.forEach(it=>{ const s=SECTIONS[it.sec]; if(s && s.page===p){ (bySec[it.sec]=bySec[it.sec]||[]).push(it); } });
-  let out='';
+  // dishes in a NEW section are laid out under its heading by nsForPage, not here
+  added.forEach(it=>{ const s=SECTIONS[it.sec]; if(s && !s._new && s.page===p){ (bySec[it.sec]=bySec[it.sec]||[]).push(it); } });
   for(const si in bySec){
     const sec=SECTIONS[si];
     let shift=0;  // ride the same reflow as the section's items when something above was removed
@@ -1865,12 +1870,307 @@ function appendedForPage(p, removedSlots, growSlots){
       // Report, but still place it: silently dropping a dish the user deliberately added is
       // worse than printing it tight, and ADD behaviour must not change just because growth exists.
       if(_floor!=null && _bottom<_floor+DESC_CLEAR){ try{console.warn('appendedForPage: no room for "'+(it.name||'')+'" below '+(sec.label||sec.col_x)+' — skipped');}catch(_){ } }
-      out += buildItemJS(it,sec,cy);
+      out.push({it, sec, y:cy});
       prevName = 1; prevDesc = wrapDesc((it.desc||'').toUpperCase(),addDescChars(sec),2).lines.filter(Boolean).length;
     }
   }
   return out;
 }
+function appendedForPage(p, removedSlots, growSlots){
+  return appendedLayout(p, removedSlots, growSlots).map(o=>buildItemJS(o.it, o.sec, o.y)).join('');
+}
+
+/* ============================ NEW SECTIONS ============================
+   A section the artwork never had ("SOUPS", "DIPS") — a heading plus the dishes added to it. It is
+   stacked under the LAST section of a column (page 1's SALADS, PASTA SPECIALS and DESSERT SPECIALS;
+   page 0's two pizza columns), in the column's free space above the footer, and its heading is set
+   the way the page's own sub-headings are (SIDES, SALADS: Loos Compressed Bold, 15pt, the menu's
+   red, at the column's left edge). A new section is a synthetic entry at the end of SECTIONS (index
+   = FM.sections.length + its place in newSecs), so the add form, buildItemJS, growPlan and the saved
+   state handle its dishes unchanged. Position is never stored: it is laid out from the anchor on
+   every pass, so it rides removals, description growth and dishes added to the anchor section
+   exactly as they move the anchor's own appended dishes.
+   THE HEADING FACE. The PDF's Loos Compressed Bold is a 15-glyph subset (2 3 8 A C D E I L M P R S
+   T Z) and not a free font, so a title it can't set (BREADS, DRINKS, EXTRAS…) prints in Barlow
+   Condensed ExtraBold instead (OFL, assets/fonts/), the closest open face to it, at the size that
+   matches its cap height. A title the subset CAN set still prints in the designer's own face. The
+   .ttf is embedded whole the first time a heading needs it, so a menu without one exports exactly
+   as before. Ported from the Aiko editor (its NEW SECTIONS), minus the handwritten label Aiko's
+   headings carry and this menu's don't. */
+let newSecs = [];   // [{id, after, title}]
+const NS={ GAP:28, HEAD:23.5, SIZE:15, LEAD:9.0, RED:'0 0.988 1 0 k' };   // GAP: ink above -> heading baseline; HEAD: heading -> first name baseline (SIDES -> MISO TOMATO SOUP)
+const HEAD={ res:{}, chars:'', widths:{}, cap:0.67,
+  fb:{ url:'/assets/fonts/BarlowCondensed-ExtraBold.ttf', ps:'BarlowCondensed-ExtraBold', res:'CkHead', cap:0.7, chars:'', widths:{}, ok:false, data:null, ref:null } };
+// the cover's own name for Loos on each page, and the letters (with widths) its subset holds
+function headResolveFonts(){
+  try{
+    for(let p=0;p<doc.getPageCount();p++){
+      const fonts=doc.getPage(p).node.Resources().lookup(PDFName.of('Font')); if(!fonts) continue;
+      for(const [k, ref] of fonts.entries()){
+        const f=doc.context.lookup(ref), base=String(f.get(PDFName.of('BaseFont'))||'');
+        if(!/LoosCompressed-Bold$/.test(base)) continue;
+        HEAD.res[p]=k.asString();
+        if(!HEAD.chars){
+          const fc=+String(f.get(PDFName.of('FirstChar'))||32), W=doc.context.lookup(f.get(PDFName.of('Widths')));
+          if(W&&W.size) for(let i=0;i<W.size();i++){ const w=+String(W.get(i)); if(w>0){ const ch=String.fromCharCode(fc+i); HEAD.chars+=ch; HEAD.widths[ch]=w; } }
+          const fd=doc.context.lookup(f.get(PDFName.of('FontDescriptor'))); const cap=fd&&+String(fd.get(PDFName.of('CapHeight'))||0); if(cap>0) HEAD.cap=cap/1000;
+        }
+      }
+    }
+  }catch(e){ console.warn('heading font: kept the defaults', e); }
+}
+async function headLoadFont(){
+  const F=HEAD.fb;
+  try{
+    const r=await fetch(F.url); if(!r.ok) throw new Error('HTTP '+r.status);
+    const buf=await r.arrayBuffer(), P=FullFonts.parseOtf(buf); if(!P.ttf) throw new Error('not a TrueType font');
+    const b=new DataView(buf), u8=new Uint8Array(buf), T={}, tag=o=>String.fromCharCode(u8[o],u8[o+1],u8[o+2],u8[o+3]);
+    for(let i=0, n=b.getUint16(4); i<n; i++){ const o=12+16*i; T[tag(o)]=b.getUint32(o+8); }
+    const upm=b.getUint16(T.head+18), sc=v=>Math.round(v*1000/upm);
+    const widths=[], W={}; let chars='';
+    for(let c=32; c<=126; c++){ const g=P.cmap.get(c), w=g?P.width(g):0; widths.push(w); if(g){ const ch=String.fromCharCode(c); W[ch]=w; chars+=ch; } }
+    F.data={ ttf:P.ttf, widths, bbox:[36,38,40,42].map(o=>sc(b.getInt16(T.head+o))), asc:sc(b.getInt16(T.hhea+4)), desc:sc(b.getInt16(T.hhea+6)), capU:sc(upm*F.cap) };
+    F.chars=chars; F.widths=W; F.ok=true;
+  }catch(e){ console.warn('heading look-alike: new headings keep the subset’s letters', e); }
+}
+// the first time a heading is set in it: the whole .ttf into the document, the font onto every page
+function headEmbed(){
+  const F=HEAD.fb; if(F.ref || !F.ok) return;
+  const d=F.data, ctx=doc.context;
+  const file=ctx.register(PDFRawStream.of(ctx.obj({ Length:d.ttf.length, Length1:d.ttf.length }), d.ttf));
+  const fd=ctx.register(ctx.obj({ Type:'FontDescriptor', FontName:F.ps, Flags:32, FontBBox:d.bbox, ItalicAngle:0, Ascent:d.asc, Descent:d.desc, CapHeight:d.capU, StemV:120, FontFile2:file }));
+  F.ref=ctx.register(ctx.obj({ Type:'Font', Subtype:'TrueType', BaseFont:F.ps, FirstChar:32, LastChar:126, Widths:d.widths, Encoding:'WinAnsiEncoding', FontDescriptor:fd }));
+  for(let p=0; p<doc.getPageCount(); p++) doc.getPage(p).node.Resources().lookup(PDFName.of('Font')).set(PDFName.of(F.res), F.ref);
+}
+const headText=t=>normTypo(String(t||'')).toUpperCase().trim();
+// null when the subset sets every letter of the title, else the look-alike face (if it loaded)
+function headUse(t){ t=headText(t); if(!t || [...t].every(c=>HEAD.chars.indexOf(c)>=0)) return null; return HEAD.fb.ok? {text:t} : null; }
+const headFbSize=()=>Math.round(NS.SIZE*HEAD.cap/HEAD.fb.cap*10)/10;   // the look-alike at the cap height Loos has at NS.SIZE
+function headBadChars(t){ t=headText(t); const out=[]; for(const c of new Set(t)){ if(HEAD.chars.indexOf(c)>=0) continue; if(HEAD.fb.ok && HEAD.fb.chars.indexOf(c)>=0) continue; out.push(c); } return out; }
+function headWidth(t){ t=headText(t); const U=headUse(t); let w=0;
+  if(U){ for(const c of t) w+=(HEAD.fb.widths[c]||0); return w/1000*headFbSize(); }
+  for(const c of t) w+=(HEAD.widths[c]||0); return w/1000*NS.SIZE; }
+function nsSection(ns){
+  const a=(FM.sections||[])[ns.after]||{}, t=headText(ns.title)||'NEW SECTION';
+  return { label:t, category:t, page:a.page, col_x:a.col_x, name_size:a.name_size||13, price_right:a.price_right, price_right_2:a.price_right_2, cols:a.cols,
+           divider_w:a.divider_w||0, slot:a.slot||49, gap_below:0, last_name_lines:1, last_desc_lines:2, _new:ns.id, _after:ns.after };
+}
+function syncSections(){ SECTIONS=(FM.sections||[]).concat(newSecs.map(nsSection)); }
+function nsBase(){ return (FM.sections||[]).length; }
+// the sections a new one can follow: the LOWEST baked section of each column on the page
+function nsAnchors(p){
+  const out=[];
+  for(const col of pageColumns(p)){
+    let best=null;
+    (FM.sections||[]).forEach((s,i)=>{ if(s.page===p&&s.col_x>=col.min&&s.col_x<col.max&&(!best||s.last_y<best.sec.last_y)) best={i,sec:s}; });
+    if(best) out.push(Object.assign(best,{col}));
+  }
+  return out;
+}
+const nsDescLines=(it, sec)=>wrapDesc((it.desc||'').toUpperCase(), addDescChars(sec), 2).lines.filter(Boolean).length;
+// lowest ink of a dish whose name sits at y with n description lines
+function nsInk(y, n){ return n>0 ? y+AC.desc_dy-(n-1)*NS.LEAD-1.5 : y-3; }
+/* Where every new heading and dish on page p goes, and how much room each column has left
+   (room < 0: the column runs into the footer). Anchors with no new section are left out. */
+function nsLayout(p, removedSlots, growSlots){
+  const out={heads:[], items:[], cols:[]}, base=nsBase();
+  if(!newSecs.length) return out;
+  for(const an of nsAnchors(p)){
+    const mine=[]; newSecs.forEach((ns,k)=>{ if(ns.after===an.i) mine.push({ns, si:base+k}); });
+    if(!mine.length) continue;
+    const A=an.sec;
+    let shift=0;   // the same reflow appendedForPage gives the anchor's own appended dishes
+    for(const rs of (removedSlots||[])) if(A.col_x>=rs.cmin&&A.col_x<rs.cmax&&rs.y>A.last_y) shift+=Math.abs(rs.h);
+    for(const gs of (growSlots||[])) if(A.col_x>=gs.cmin&&A.col_x<gs.cmax&&gs.y>A.last_y) shift-=Math.abs(gs.h);
+    let y=A.last_y+shift, pn=A.last_name_lines||1, pd=A.last_desc_lines||1;
+    for(const it of added) if(it.sec===an.i){   // replay appendedForPage's stacking of the anchor's dishes
+      y-=A.slot+(pd-2)*NS.LEAD+(pn-1)*13.5; pn=1; pd=nsDescLines(it,A); }
+    const start=nsInk(y,pd);
+    let ink=start;
+    for(const {ns,si} of mine){
+      const sec=SECTIONS[si], hy=ink-NS.GAP;
+      out.heads.push({ns, si, sec, x:A.col_x, y:hy});
+      let iy=null, dl=0;
+      for(const it of added) if(it.sec===si){ iy=(iy==null)? hy-NS.HEAD : iy-(sec.slot+(dl-2)*NS.LEAD); dl=nsDescLines(it,sec); out.items.push({it, sec, y:iy, first:iy===hy-NS.HEAD}); }
+      ink=(iy==null)? hy-4 : nsInk(iy,dl);
+    }
+    const g=colGeo(p, an.col); let floor=(g.floor!=null?g.floor:18)+DESC_CLEAR;
+    /* The ADD-ONS price list sits in the right column's free space on page 0, and its prices are
+       fields of that column — so colGeo's floor is the footer under it, not the list. A new section
+       stops above the list: its top row, a line for the optional heading, and a little air. */
+    if(FM.addons && FM.addons.page===p && FM.addons.x>=an.col.min && FM.addons.x<an.col.max)
+      floor=Math.max(floor, Math.max(...FM.addons.rows.map(r=>r.y)) + 2*(FM.addons.pitch||12) + 4);
+    out.cols.push({anchor:an.i, start, end:ink, room:ink-floor});
+  }
+  return out;
+}
+// height new sections take out of a column's free space, measured on the pristine page (growPlan)
+function nsSpend(p, col){
+  if(!newSecs.length) return 0;
+  let s=0; for(const c of nsLayout(p).cols){ const A=FM.sections[c.anchor]; if(A.col_x>=col.min&&A.col_x<col.max) s+=c.start-c.end; }
+  return s;
+}
+// the live reflow (removals, growth) for the editor's room checks — cached, it walks the stream
+let _nsStSig=null, _nsSt={};
+function nsSlots(p){
+  const sig=growSig(); if(sig!==_nsStSig){ _nsStSig=sig; _nsSt={}; }
+  return _nsSt[p]||(_nsSt[p]=structuralForPage(p, pageStreams[p].pristine));
+}
+function nsLiveLayout(p){ const st=nsSlots(p); return nsLayout(p, st.removedSlots, st.growSlots); }
+// room left under `anchor` once `tmpItems` (and optionally one more section) are in — nothing is kept
+function nsRoomWith(anchor, tmpItems, tmpSec){
+  const A=FM.sections[anchor]; if(!A) return Infinity;
+  const st=nsSlots(A.page);   // before the temporary entries: they never move what is above them
+  if(tmpSec){ newSecs.push(tmpSec); syncSections(); }
+  const n=tmpItems.length; added.push(...tmpItems.map(t=>Object.assign({},t,{sec:t.sec==='tmp'?SECTIONS.length-1:t.sec})));
+  try{ const c=nsLayout(A.page, st.removedSlots, st.growSlots).cols.find(c=>c.anchor===anchor); return c?c.room:Infinity; }
+  finally{ added.splice(added.length-n, n); if(tmpSec){ newSecs.pop(); syncSections(); } }
+}
+function nsAnchorOf(si){ const s=SECTIONS[si]; return s? (s._new? s._after : si) : -1; }
+// would adding this dish to section si still leave every new section on the page?
+function nsFits(si, item){
+  const a=nsAnchorOf(si); if(a<0 || !newSecs.some(ns=>ns.after===a)) return true;
+  return nsRoomWith(a, [Object.assign({}, item, {sec:si})]) >= 0;
+}
+// how many more two-line dishes fit in new section si
+function nsRoomCount(si){
+  const sec=SECTIONS[si], dummy={sec:si, name:'X', desc:'X'.repeat(addDescChars(sec)+1), price:'1', allergens:[]};
+  let n=0; while(n<12 && nsRoomWith(nsAnchorOf(si), Array(n+1).fill(dummy))>=0) n++;
+  return n;
+}
+// can a new section (with one short dish) still go under this anchor?
+function nsAnchorHasRoom(ai){
+  const tmp={id:'_tmp', after:ai, title:'X'};
+  return nsRoomWith(ai, [{sec:'tmp', name:'X', desc:'X', price:'1', allergens:[]}], tmp) >= 0;
+}
+// the heading: Loos when the subset has its letters, else the look-alike, in its own q/Q
+function nsHeadJS(h){
+  const title=headText(h.ns.title); if(!title) return '';
+  const U=headUse(title); if(U) headEmbed();
+  const res=U? '/'+HEAD.fb.res : (HEAD.res[h.sec.page]||'/T1_1'), size=U? headFbSize() : NS.SIZE;
+  const sz=PAGES[h.sec.page]||[841.89,595.276], W=sz[0], H=sz[1];
+  return '\nq\n0 '+jFmt(H)+' '+jFmt(W)+' '+jFmt(-H)+' re\nW n\nBT\n'+NS.RED+'\n'+res+' 1 Tf\n0 Tc 0 Tw '+jFmt(size)+' 0 0 '+jFmt(size)+' '+jFmt(h.x)+' '+jFmt(h.y)+' Tm\n('+jEsc(title)+')Tj\nET\nQ\n';
+}
+function nsForPage(p, removedSlots, growSlots){
+  if(!newSecs.length) return '';
+  const L=nsLayout(p, removedSlots, growSlots);
+  for(const c of L.cols) if(c.room<0){ try{console.warn('nsForPage: the new sections under '+FM.sections[c.anchor].label+' run '+(-c.room).toFixed(1)+'pt into the footer');}catch(_){ } }
+  // the first dish under a heading has no rule above it, as the artwork's sections don't
+  return L.heads.map(nsHeadJS).join('') + L.items.map(o=>buildItemJS(o.it, o.first? Object.assign({}, o.sec, {divider_w:0}) : o.sec, o.y)).join('');
+}
+/* ---- NEW SECTIONS panel ---------------------------------------------------------------------
+   One group per new section on this page (its heading input, its dishes, the room it has left),
+   then "+ Add a new section". The heading input is `.secinp`, so an unprintable letter blocks
+   export like a font error; `.nsbad` marks what doesn't fit (counted by updateGate as "too long"). */
+let _addInto=null;   // section index the add-dish form should open on, after the next rebuild
+function nsTitleProblem(ns){
+  const t=headText(ns.title), A=FM.sections[ns.after];
+  const bad=headBadChars(t);
+  if(bad.length) return {glyph:true, msg:'can’t print:  '+bad.map(c=>c===' '?'space':c).join('  ')};
+  if(!t) return {msg:'give the section a name'};
+  const room=(A.price_right||A.col_x+250)-A.col_x-10, w=headWidth(t);
+  if(w>room) return {msg:'too wide for the column — '+w.toFixed(0)+'pt of '+room.toFixed(0)+'pt'};
+  return null;
+}
+const nsTitleOk=ns=>headUse(ns.title)? '✓ prints in red — a close match to the menu’s heading face' : '✓ prints in the menu’s heading face';
+function nsRemove(k){
+  const si=nsBase()+k;
+  added=added.filter(a=>a.sec!==si).map(a=>a.sec>si? Object.assign({},a,{sec:a.sec-1}) : a);
+  newSecs.splice(k,1); syncSections();
+}
+// the room line under a new section's heading; refreshed in place when a dish on the page is edited
+function nsNoteFill(note, ns, si, L){
+  const col=L&&L.cols.find(c=>c.anchor===ns.after);
+  note.classList.remove('bad','nsbad');
+  if(col&&col.room<0){ note.textContent='Doesn’t fit: runs '+(-col.room).toFixed(0)+'pt into the footer. Remove a dish or shorten a description.'; note.classList.add('bad','nsbad'); }
+  else { const n=nsRoomCount(si); note.textContent=n? 'Room for about '+n+' more dish'+(n===1?'':'es')+' (one-line add-ons take less).' : 'No room for another dish here.'; }
+}
+function nsRefreshNotes(){
+  const notes=document.querySelectorAll('#editor .nsnote[data-ns]'); if(!notes.length) return;
+  const L=nsLiveLayout(activePage), base=nsBase();
+  notes.forEach(note=>{ const k=newSecs.findIndex(ns=>ns.id===note.dataset.ns); if(k>=0) nsNoteFill(note, newSecs[k], base+k, L); });
+}
+function renderNewSections(ed){
+  const base=nsBase();
+  const mine=[]; newSecs.forEach((ns,k)=>{ const s=SECTIONS[base+k]; if(s&&s.page===activePage) mine.push({ns,k,si:base+k}); });
+  const L=mine.length? nsLiveLayout(activePage) : null;
+  for(const {ns,k,si} of mine){
+    const sec=SECTIONS[si], items=added.filter(a=>a.sec===si), A=FM.sections[ns.after];
+    const sh=document.createElement('div'); sh.className='grouphd sechd'; sh.id='sec-ns-'+ns.id; sh.dataset.sec=sec.label;
+    const shL=document.createElement('span'), shN=document.createElement('span'); shN.className='n';
+    shL.textContent=sec.label; shN.textContent=items.length+' item'+(items.length===1?'':'s');
+    sh.append(shL, shN); ed.appendChild(sh);
+    const card=document.createElement('div'); card.className='card seccard nscard'; card.dataset.ns=ns.id;   // the preview's click box finds it by this
+    const ttl=document.createElement('div'); ttl.className='sectitle'; ttl.textContent='NEW SECTION · UNDER '+(A.label||'')+(A.category&&A.category!==A.label?' ('+A.category+')':''); card.appendChild(ttl);
+    const w=document.createElement('div'); w.className='secrow';
+    const lb=document.createElement('label'); lb.className='seclbl'; lb.textContent='Section name';
+    const inp=document.createElement('input'); inp.className='secinp'; inp.spellcheck=false; inp.value=ns.title||''; inp.placeholder='Soups'; inp.maxLength=24;
+    const meta=document.createElement('div'); meta.className='afmeta';
+    w.append(lb, inp, meta); card.appendChild(w);
+    const check=()=>{
+      const pr=nsTitleProblem(ns);
+      meta.textContent=pr? pr.msg : nsTitleOk(ns);
+      meta.className='afmeta'+(pr?' bad':'');
+      inp.classList.toggle('badglyph', !!(pr&&pr.glyph));
+      inp.classList.toggle('nsbad', !!(pr&&!pr.glyph));
+    };
+    inp.oninput=()=>{ ns.title=inp.value; syncSections(); shL.textContent=SECTIONS[si].label; check();
+      try{ MEM.tick(); }catch(_){} schedulePreview(); updateGate(); };
+    check();
+    const note=document.createElement('div'); note.className='nsnote'; note.dataset.ns=ns.id;
+    nsNoteFill(note, ns, si, L); card.appendChild(note);
+    const btns=document.createElement('div'); btns.className='nsbtns';
+    const addB=document.createElement('button'); addB.type='button'; addB.textContent='+ Add a dish here';
+    addB.onclick=()=>{ _addInto=si; buildEditor(); };
+    const delB=document.createElement('button'); delB.type='button'; delB.className='nsdel'; delB.textContent='Remove section';
+    delB.onclick=()=>{
+      if(items.length && !confirm('Remove the section “'+(ns.title||'')+'” and its '+items.length+' dish'+(items.length===1?'':'es')+'?')) return;
+      nsRemove(k); try{ MEM.tick(); }catch(_){} buildEditor(); schedulePreview(); };
+    btns.append(addB, delB); card.appendChild(btns);
+    ed.appendChild(card);
+    for(const a of items) ed.appendChild(addedCard(a));
+  }
+}
+function renderAddSectionZone(ed){
+  const anchors=nsAnchors(activePage); if(!anchors.length) return;
+  const zone=document.createElement('div'); zone.className='addzone nszone';
+  const btn=document.createElement('button'); btn.className='addbtn'; btn.textContent='+  Add a new section';
+  const form=document.createElement('div'); form.className='addform';
+  const fits=anchors.map(an=>nsAnchorHasRoom(an.i));
+  const where=an=>{ const s=an.sec; return (s.category&&s.category!==s.label? s.category+' · ' : '')+s.label+' · '+colWord(s.col_x)+' column'; };
+  form.innerHTML='<label>Section name</label><input type="text" class="ns-title" maxlength="24" placeholder="Soups">'
+    +'<div class="afmeta ns-tmeta"></div>'
+    +'<label>Goes under</label><select class="af-sec ns-where">'
+    +anchors.map((an,i)=>'<option value="'+an.i+'"'+(fits[i]?'':' disabled')+'>'+esc(where(an))+(fits[i]?'':' · no room')+'</option>').join('')
+    +'</select><div class="afmeta ns-wmeta"></div>'
+    +'<div class="afbtns"><button class="afadd">Create section</button><button class="afcancel">Cancel</button></div>';
+  btn.onclick=()=>{ form.classList.toggle('open'); if(form.classList.contains('open')) form.querySelector('.ns-title').focus(); };
+  zone.append(btn, form); ed.appendChild(zone);
+  const tEl=form.querySelector('.ns-title'), wEl=form.querySelector('.ns-where'), tm=form.querySelector('.ns-tmeta'), wm=form.querySelector('.ns-wmeta'), go=form.querySelector('.afadd');
+  const firstFit=fits.indexOf(true);
+  if(firstFit>=0) wEl.value=String(anchors[firstFit].i);
+  const draft=()=>({id:'', after:+wEl.value, title:normTypo(tEl.value).trim()});
+  function validate(){
+    const ns=draft(), tp=nsTitleProblem(ns);
+    tm.textContent=tp? tp.msg : nsTitleOk(ns); tm.classList.toggle('bad', !!(tp&&ns.title));
+    if(!ns.title){ tm.textContent='e.g. Soups, Dips, Sharing Plates'; }
+    const ok=firstFit>=0;
+    wm.textContent=ok? 'It goes in the free space at the bottom of that column, above the footer.'
+      : 'No free space on this page — remove a dish first, or add the section on the other page.';
+    wm.classList.toggle('bad', !ok);
+    go.disabled=!ok || !!tp;
+  }
+  tEl.oninput=wEl.onchange=validate; validate();
+  form.querySelector('.afcancel').onclick=()=>form.classList.remove('open');
+  go.onclick=()=>{
+    if(go.disabled) return;
+    const ns=draft(); ns.id='s'+Date.now().toString(36);
+    newSecs.push(ns); syncSections();
+    _addInto=nsBase()+newSecs.length-1;   // straight into adding its first dish
+    try{ MEM.tick(); }catch(_){} buildEditor(); schedulePreview();
+  };
+}
+
 
 
 // ---- DIVIDER ENGINE: dividers are decoupled from icon-bundling blocks and positioned by their OWN y ----
@@ -3173,7 +3473,7 @@ async function regenerate(){
     if(pc.del.length) ops = ops.filter(o=> !pc.del.some(d=> o.s < d[1] && d[0] < o.e));
     for(const sp of pc.del){ ops.push({s:sp[0],e:sp[1],rep:enc(safeDel(p,sp[0],sp[1],keepFont(sp,p)))}); }
     let edited = ops.length ? spliceBytes(ps.pristine, ops) : ps.pristine;
-    const addStr = appendedForPage(p, st.removedSlots, st.growSlots) + mkAppend + pc.add + ao.add;
+    const addStr = appendedForPage(p, st.removedSlots, st.growSlots) + nsForPage(p, st.removedSlots, st.growSlots) + mkAppend + pc.add + ao.add;
     if(addStr){ const ab=enc(addStr); const m=new Uint8Array(edited.length+ab.length); m.set(edited,0); m.set(ab,edited.length); edited=m; }
     ps.dict.set(PDFName.of('Length'), PDFNumber.of(edited.length));
     doc.context.assign(ps.ref, PDFRawStream.of(ps.dict, edited));
@@ -3227,6 +3527,20 @@ function pvBoxes(p){
       right = pr.x + String(pr.text||'').length*(ADV.price||0.63)*(pr.size||8) + 5; }
     out.push({id:n.id, x0:n.x-6, x1:right, top, bot});
   }
+  /* Added dishes and new sections get boxes too, from the same layout the PDF is written with
+     (appendedLayout / nsLayout, fed the same reflow). A dish is keyed by its place in `added` (its
+     card carries data-added), a section by its id (data-ns on its card). */
+  const addedBox=(it, sec, Y)=>{
+    const SZ=sec.name_size||13, DDY=(sec.desc_dy!=null?sec.desc_dy:AC.desc_dy);
+    const dl=wrapDesc((it.desc||'').toUpperCase(), addDescChars(sec), 2).lines.filter(Boolean).length;
+    const bot=dl? Y+DDY-(dl-1)*9.0-AC.desc_size*0.35 : Y-5;
+    const right=(sec.price_right_2!=null? sec.price_right_2 : sec.price_right)||(sec.col_x+235);
+    return {id:'added:'+added.indexOf(it), x0:sec.col_x-6, x1:right+5, top:Y+SZ*0.95, bot};
+  };
+  for(const o of appendedLayout(p, st.removedSlots, st.growSlots)) out.push(addedBox(o.it, o.sec, o.y));
+  const L=nsLayout(p, st.removedSlots, st.growSlots);
+  for(const h of L.heads){ const w=headWidth(h.ns.title); out.push({id:'ns:'+h.ns.id, x0:h.x-4, x1:h.x+Math.max(40,w)+6, top:h.y+NS.SIZE*0.85, bot:h.y-4}); }
+  for(const o of L.items) out.push(addedBox(o.it, o.sec, o.y));
   return out;
 }
 function pvSync(){
@@ -3241,7 +3555,7 @@ function pvSync(){
     d.style.width = (Math.max(10,b.x1-b.x0)/W*100)+'%';
     d.style.top   = ((H-b.top)/H*100)+'%';
     d.style.height= (Math.max(8,b.top-b.bot)/H*100)+'%';
-    d.title='Click to edit this item';
+    d.title=b.id.startsWith('ns:')? 'Click to edit this section' : 'Click to edit this item';
     d.addEventListener('click',()=>pvJump(b.id));
     hl.appendChild(d);
   }
@@ -3250,11 +3564,15 @@ function pvSync(){
 }
 function pvJump(id){
   _pvSel=id; pvSync();
-  const el=document.querySelector('#editor [data-id="'+(window.CSS&&CSS.escape?CSS.escape(id):id)+'"]');
-  const card=el?el.closest('.card'):null; if(!card) return;
+  const cssEsc=v=>(window.CSS&&CSS.escape? CSS.escape(String(v)) : String(v)), q=sel=>document.querySelector(sel);
+  let el=null, card=null;
+  if(id.startsWith('added:')){ card=q('#editor .addedcard[data-added="'+cssEsc(id.slice(6))+'"]'); el=card&&card.querySelector('.name'); }
+  else if(id.startsWith('ns:')){ card=q('#editor .nscard[data-ns="'+cssEsc(id.slice(3))+'"]'); el=card&&card.querySelector('.secinp'); }
+  else { el=q('#editor [data-id="'+cssEsc(id)+'"]'); card=el? el.closest('.card') : null; }
+  if(!card) return;
   card.scrollIntoView({behavior:'smooth', block:'center'});
   card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash');
-  if(el&&el.isContentEditable) setTimeout(()=>el.focus(),260);
+  if(el&&(el.isContentEditable||el.tagName==='INPUT')) setTimeout(()=>el.focus(),260);
 }
 async function renderPreview(){
   const my = ++renderToken;
@@ -3333,55 +3651,14 @@ function sectionsForPage(p){ let r=[]; (SECTIONS||[]).forEach((s,i)=>{ if(s.page
 function addedCountInSec(i){ return added.filter(a=>a.sec===i).length; }
 function secCapacity(s){ return Math.max(1, Math.floor(s.gap_below/s.slot)); }
 function colWord(x){ return x<200?'left':x<450?'middle':'right'; }
-function renderAddZone(ed){
-  const secs=sectionsForPage(activePage);
-  if(!secs.length) return;
-  /* Drop anything the target font cannot print, rather than letting it reach the PDF as a blank.
-     ALLOWED.name was widened at boot to include digits and .,:-/ because the emitter borrows those
-     glyphs from other embedded faces (see nameRunPdf), so this stays in step automatically. */
-  /* Strip unprintable characters but PRESERVE THE TYPED CASE. Uppercasing here is what made typing
-     run backwards: the menu prints uppercase, so the old version uppercased on every keystroke, which
-     meant the field's text always differed from what the user had just typed, which forced a DOM
-     rewrite on every character, which collapsed the caret to position 0. The data is uppercased at
-     the point it is STORED instead, and the field is uppercased visually by CSS. */
-  /* A contentEditable inserts a NON-BREAKING space (U+00A0), not a plain one — deliberately, because
-     a plain TRAILING space collapses in HTML and would not render. So:
-       - the field KEEPS its nbsp (allowed here), which is why nothing is rewritten and the space you
-         type actually appears and holds the caret;
-       - normTypo folds it to U+0020 only at the point the value is STORED, so the PDF gets a real
-         space and never an nbsp.
-     Stripping it in the field (the previous attempt) removed the character outright; converting it to
-     a plain space (the attempt before that) made a trailing space collapse and vanish. */
-  const cleanFor=(s,kind)=>{ const al=(ALLOWED[kind]||ALLOWED.name)+'\u00A0'   /* explicit: NBSP, what a contentEditable inserts for a space */;
-    return [...String(s||'')].filter(c=>al.indexOf(c.toUpperCase())>=0).join(''); };
-  const storeVal=(s)=>normTypo(String(s||'')).toUpperCase();
-  /* Writing textContent on a contentEditable COLLAPSES THE CARET TO THE START, so rewriting on every
-     keystroke made typing come out reversed. Put the caret back where it was, minus however many
-     characters the clean-up removed — the same correction churnd's name input makes with
-     setSelectionRange(p-1). Only touch the DOM when the text actually changed, so normal typing
-     never moves the caret at all. */
-  const setEditable=(el,v)=>{
-    const prev=el.textContent;
-    if(prev===v) return;
-    const sel=document.getSelection();
-    let off=null;
-    if(sel&&sel.rangeCount&&el.contains(sel.anchorNode)) off=sel.anchorOffset;
-    el.textContent=v;
-    if(off==null) return;
-    const want=Math.max(0, Math.min(off-(prev.length-v.length), v.length));
-    try{ const node=el.firstChild||el; const r=document.createRange();
-         r.setStart(node, node.nodeType===3?want:0); r.collapse(true);
-         sel.removeAllRanges(); sel.addRange(r); }catch(_){ }
-  };
-  added.forEach((a,idx)=>{
-    if(SECTIONS[a.sec].page!==activePage) return;
+function addedCard(a){
     /* An added dish gets the SAME `.card` a baked dish gets, not a read-only strip. It used to render
        as four spans with no separator ("HOT CHIPSNEW IN LEFT") and no way to change anything after
        adding \u2014 so a typo meant deleting the dish and re-entering it. Bound to `added[idx]` instead of
        `edits{}`, but reusing the baked markup so it inherits the styling, and reusing cleanField\u00e2\u2020\u2019
        ALLOWED / wrapDesc / MARKER_TYPES so the same rules apply as everywhere else. */
     const sec=SECTIONS[a.sec];
-    const card=document.createElement('div'); card.className='card addedcard';
+    const card=document.createElement('div'); card.className='card addedcard'; card.dataset.added=String(added.indexOf(a));   // the preview's click box finds it by this
     const nrow=document.createElement('div'); nrow.className='nrow';
     const name=document.createElement('div'); name.className='name'; name.contentEditable='true';
     name.dataset.kind='name'; name.textContent=a.name||'';
@@ -3428,12 +3705,56 @@ function renderAddZone(ed){
         a.allergens=MARKER_TYPES.filter(x=>cur.has(x)); chip.classList.toggle('on'); schedulePreview(); };
       mrow.appendChild(chip);
     }
-    card.appendChild(mrow); ed.appendChild(card);
-  });
+    card.appendChild(mrow);
+    return card;
+}
+function renderAddZone(ed){
+  const secs=sectionsForPage(activePage);
+  if(!secs.length) return;
+  /* Drop anything the target font cannot print, rather than letting it reach the PDF as a blank.
+     ALLOWED.name was widened at boot to include digits and .,:-/ because the emitter borrows those
+     glyphs from other embedded faces (see nameRunPdf), so this stays in step automatically. */
+  /* Strip unprintable characters but PRESERVE THE TYPED CASE. Uppercasing here is what made typing
+     run backwards: the menu prints uppercase, so the old version uppercased on every keystroke, which
+     meant the field's text always differed from what the user had just typed, which forced a DOM
+     rewrite on every character, which collapsed the caret to position 0. The data is uppercased at
+     the point it is STORED instead, and the field is uppercased visually by CSS. */
+  /* A contentEditable inserts a NON-BREAKING space (U+00A0), not a plain one — deliberately, because
+     a plain TRAILING space collapses in HTML and would not render. So:
+       - the field KEEPS its nbsp (allowed here), which is why nothing is rewritten and the space you
+         type actually appears and holds the caret;
+       - normTypo folds it to U+0020 only at the point the value is STORED, so the PDF gets a real
+         space and never an nbsp.
+     Stripping it in the field (the previous attempt) removed the character outright; converting it to
+     a plain space (the attempt before that) made a trailing space collapse and vanish. */
+  const cleanFor=(s,kind)=>{ const al=(ALLOWED[kind]||ALLOWED.name)+'\u00A0'   /* explicit: NBSP, what a contentEditable inserts for a space */;
+    return [...String(s||'')].filter(c=>al.indexOf(c.toUpperCase())>=0).join(''); };
+  const storeVal=(s)=>normTypo(String(s||'')).toUpperCase();
+  /* Writing textContent on a contentEditable COLLAPSES THE CARET TO THE START, so rewriting on every
+     keystroke made typing come out reversed. Put the caret back where it was, minus however many
+     characters the clean-up removed — the same correction churnd's name input makes with
+     setSelectionRange(p-1). Only touch the DOM when the text actually changed, so normal typing
+     never moves the caret at all. */
+  const setEditable=(el,v)=>{
+    const prev=el.textContent;
+    if(prev===v) return;
+    const sel=document.getSelection();
+    let off=null;
+    if(sel&&sel.rangeCount&&el.contains(sel.anchorNode)) off=sel.anchorOffset;
+    el.textContent=v;
+    if(off==null) return;
+    const want=Math.max(0, Math.min(off-(prev.length-v.length), v.length));
+    try{ const node=el.firstChild||el; const r=document.createRange();
+         r.setStart(node, node.nodeType===3?want:0); r.collapse(true);
+         sel.removeAllRanges(); sel.addRange(r); }catch(_){ }
+  };
+  // dishes added to a baked section; a new section lists its own under its card (renderNewSections)
+  added.forEach(a=>{ const sc=SECTIONS[a.sec]; if(!sc || sc.page!==activePage || sc._new) return; ed.appendChild(addedCard(a)); });
   const zone=document.createElement('div'); zone.className='addzone';
   const btn=document.createElement('button'); btn.className='addbtn'; btn.textContent='+  Add a new item';
   const form=document.createElement('div'); form.className='addform';
-  const opts=secs.map(s=>{ const cat=s.category||colWord(s.col_x).toUpperCase(); const sub=(s.label&&s.label!==cat)?(' \u00b7 '+s.label.charAt(0)+s.label.slice(1).toLowerCase()):(' \u00b7 '+colWord(s.col_x)+' column'); return '<option value="'+s._i+'">'+cat+sub+' \u00b7 room for '+(secCapacity(s)-addedCountInSec(s._i))+' more</option>'; }).join('');
+  const opts=secs.map(s=>{ if(s._new) return '<option value="'+s._i+'">'+esc(s.label)+' \u00b7 new section \u00b7 room for '+nsRoomCount(s._i)+' more</option>';
+    const cat=s.category||colWord(s.col_x).toUpperCase(); const sub=(s.label&&s.label!==cat)?(' \u00b7 '+s.label.charAt(0)+s.label.slice(1).toLowerCase()):(' \u00b7 '+colWord(s.col_x)+' column'); return '<option value="'+s._i+'">'+cat+sub+' \u00b7 room for '+(secCapacity(s)-addedCountInSec(s._i))+' more</option>'; }).join('');
   form.innerHTML='<label>Section</label><select class="af-sec">'+opts+'</select>'
     +'<label>Name</label><input type="text" class="af-name" maxlength="18" placeholder="DATE & HONEY">'
     +'<div class="afmeta af-nmeta"></div>'
@@ -3467,18 +3788,33 @@ function renderAddZone(ed){
     nmeta.textContent = nb.length?('can\u2019t print:  '+nb.map(c=>c===' '?'space':c).join('  ')):(spN.bad.length?('spelling: '+spN.bad.join('  ')):(spN.warn.length?('check: '+spN.warn.join(' ')):(nm.length+'/18'))); nmeta.className='afmeta'+((nb.length||spN.bad.length)?' bad':'');
     const ov=wrapDesc(fullDesc,addDescChars(SECTIONS[+secEl.value]),2).overflow;
     dmeta.textContent = db.length?('can\u2019t print:  '+db.map(c=>c===' '?'space':c).join('  ')):(ov?'too long \u2014 trim to fit 2 lines':(spD.bad.length?('spelling: '+spD.bad.join('  ')):(spD.warn.length?('check: '+spD.warn.join(' ')):(fullDesc.length+' chars')))); dmeta.className='afmeta'+((db.length||ov||spD.bad.length)?' bad':'');
-    const si=+secEl.value, sec=SECTIONS[si], full=addedCountInSec(si)>=secCapacity(sec);
+    const si=+secEl.value, sec=SECTIONS[si], isNew=!!sec._new;
+    /* A new section has no baked gap to count slots in: it is full when the next dish would run
+       into the footer. A baked section keeps its slot count, and the section(s) added under it
+       must still fit once this dish pushes them down. */
+    const cand={sec:si, name:nm, desc:fullDesc, price:'', allergens:[]};
+    const full=(isNew? false : addedCountInSec(si)>=secCapacity(sec)) || !nsFits(si, cand);
+    if(!de && isNew){ dmeta.textContent='optional here \u2014 leave it empty for a one-line add-on'; dmeta.className='afmeta'; }
     const two=sec.price_right_2!=null; p2wrap.style.display=two?'':'none'; const _mc=(sec&&sec.cols)||[]; plabel.textContent=two?((_mc[0]||'Regular')+' \u20b9'):'Price \u20b9'; const _p2l=p2wrap.querySelector('.af-p2label'); if(_p2l) _p2l.textContent=(_mc[1]||'Large')+' \u20b9';
     const p2b=two?bad(price2El.value.trim(),ALLOWED.price):[];
-    if(full){ nmeta.textContent='this section is full \u2014 remove one or pick another'; nmeta.className='afmeta bad'; }
+    if(full){ nmeta.textContent=(isNew||!(addedCountInSec(si)>=secCapacity(sec)))
+        ? 'no room left above the footer \u2014 shorten the description, remove a dish, or pick another section'
+        : 'this section is full \u2014 remove one or pick another'; nmeta.className='afmeta bad'; }
     /* Spelling is ADVISORY, not a blocker. The suggestion line above still shows it, but a menu is
        full of words no dictionary has — NDUJA, GHASLET, BURRATA, STRACCIATELLA — so refusing to save
        on a dictionary miss stops legitimate dishes from being added. What still blocks is only what
        genuinely cannot be printed or placed: an empty field, a character with no glyph in the font,
        text too long for its space, or a section with no room left. */
-    addBtn.disabled = !nm||!de||nb.length||db.length||gb.length||p2b.length||ov||full;
+    addBtn.disabled = !nm||(!de&&!isNew)||nb.length||db.length||gb.length||p2b.length||ov||full;
   }
-  nameEl.oninput=descEl.oninput=gramsEl.oninput=priceEl.oninput=price2El.oninput=secEl.onchange=validate; validate();
+  nameEl.oninput=descEl.oninput=gramsEl.oninput=priceEl.oninput=price2El.oninput=secEl.onchange=validate;
+  // "+ Add a dish here" on a new section, or a section just created: open the form on it
+  if(_addInto!=null && SECTIONS[_addInto] && SECTIONS[_addInto].page===activePage){
+    secEl.value=String(_addInto); form.classList.add('open');
+    setTimeout(()=>{ zone.scrollIntoView({behavior:'smooth', block:'center'}); nameEl.focus(); }, 60);
+  }
+  _addInto=null;
+  validate();
   form.querySelector('.afcancel').onclick=()=>{ form.classList.remove('open'); };
   addBtn.onclick=()=>{
     if(addBtn.disabled) return;
@@ -3682,9 +4018,11 @@ function buildEditor(){
     for(const p of looseExtras){ const w=document.createElement('div'); w.className='pwrap'; const inp=document.createElement('input'); inp.className='price'; inp.dataset.id=p.id; inp.dataset.orig=p.text; inp.value=(p.id in edits)?edits[p.id]:p.text; inp.inputMode='numeric'; w.appendChild(inp); pr.appendChild(w); }
     card.appendChild(pr); ed.appendChild(card);
   }
+  renderNewSections(ed);
   updateGate();
 
   renderAddZone(ed);
+  renderAddSectionZone(ed);
   if(typeof syncRail==='function') syncRail();
 }
 /* The room is a COLUMN budget, shared: growing one description changes what every OTHER
@@ -3794,6 +4132,10 @@ function updateGate(){
   // ADD-ONS panel inputs: unprintable characters block like a font error, over-length like overflow
   document.querySelectorAll('.adn.err').forEach(()=>gl++);
   document.querySelectorAll('.adn.over').forEach(()=>ov++);
+  // a new section's heading: an unprintable letter blocks like a font error, no name / too wide /
+  // into the footer like overflow
+  document.querySelectorAll('.secinp.badglyph').forEach(()=>gl++);
+  document.querySelectorAll('#editor .nsbad').forEach(()=>ov++);
   // the personalised cover prints the same PDF: an unprintable letter or a message that won't fit blocks too
   { const pr=personaProblem(); if(pr&&pr.glyph) gl++; if(pr&&pr.over) ov++;
     const pb=document.getElementById('persona'); if(pb) pb.classList.toggle('on', personaOn()); }   // lit on a reopened personalised menu too
@@ -4074,14 +4416,20 @@ function memSnapshot(){ const pe={occasion:persona.occasion, guest:persona.guest
   if(persona.nameColor!=='red') pe.nameColor=persona.nameColor;
   if(persona.dx) pe.dx=persona.dx; if(persona.dy) pe.dy=persona.dy;
   if(persona.scale!==1) pe.scale=persona.scale;
-  return { qr:QRK.snap(), edits:{...edits}, removed:[...removed], added, markerEdits, persona:pe, addons: addonsSnap() }; }
+  const snap={ qr:QRK.snap(), edits:{...edits}, removed:[...removed], added, markerEdits, persona:pe, addons: addonsSnap() };
+  if(newSecs.length) snap.newSecs=JSON.parse(JSON.stringify(newSecs));   // only when there is one: older menus snapshot as they did
+  return snap; }
 function personaLoad(sp){ sp=sp||{};
   const num=(v,d)=>(typeof v==='number'&&isFinite(v))? v : d;
   persona={ occasion:String(sp.occasion||''), guest:String(sp.guest||''), msg:String(sp.msg||''), on:false, size:(sp.size in COVER.msg.sizes)? sp.size : 'm',
     nameFont: NAME_FONTS.includes(sp.nameFont)? sp.nameFont : 'script', nameColor: NAME_COLORS.includes(sp.nameColor)? sp.nameColor : 'red',
     dx:num(sp.dx,0), dy:num(sp.dy,0), scale:Math.min(COVER.scale.max, Math.max(COVER.scale.min, num(sp.scale,1))) };
   persona.on = (typeof sp.on==='boolean') ? sp.on : personaHasText(); }
-function memApply(st){ QRK.load(st&&st.qr); for(const k in edits) delete edits[k]; Object.assign(edits, st.edits||{}); rewrapBaked(); /* chucky-2 */ removed=new Set(st.removed||[]); added=st.added||[]; markerEdits=st.markerEdits||{}; personaLoad(st.persona);
+function memApply(st){ QRK.load(st&&st.qr); for(const k in edits) delete edits[k]; Object.assign(edits, st.edits||{}); rewrapBaked(); /* chucky-2 */ removed=new Set(st.removed||[]);
+  // sections first: dishes in a new section point at its synthetic SECTIONS entry
+  newSecs=(Array.isArray(st.newSecs)?st.newSecs:[]).filter(ns=>ns&&FM.sections[ns.after]).map(ns=>({id:String(ns.id), after:+ns.after, title:String(ns.title||'')}));
+  syncSections();
+  added=(st.added||[]).filter(a=>SECTIONS[a.sec]); markerEdits=st.markerEdits||{}; personaLoad(st.persona);
   if(addons){
     if(st.addons && st.addons.rows){ addons.rows=st.addons.rows.map(r=>({key:r.key, name:r.name, price:r.price, removed:!!r.removed})); addons.title=st.addons.title||''; }
     else addonsInit();
@@ -4233,6 +4581,8 @@ async function boot(){
     if(full.AOMonoBold)  ALLOWED.desc = full.AOMonoBold;
     coverResolveFonts();          // the personalised cover prints in these faces under the cover page's own names
     await coverLoadFonts();       // …and in the handwritten and script faces (AO Mono stands in for one that fails)
+    headResolveFonts();           // new sections' headings: the pages' own Loos, and its look-alike for letters it lacks
+    await headLoadFont();
     for(let p=0;p<doc.getPageCount();p++){
       const page=doc.getPage(p); const ref=page.node.get(PDFName.of('Contents'));
       const stream=doc.context.lookup(ref);

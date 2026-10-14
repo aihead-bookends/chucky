@@ -68,17 +68,8 @@ function itemBlock(a, tpl, y){
 // build splice ops + appended block for the menu page (reflow: shift rows below removed/added)
 function menuOps(){
   const ops=[], rh=FM.row_h;
-  const removedYs=[...removed].map(id=>FM.items[id].row_y);
-  const insertYs=added.map(a=>FM.sections[a.sec].add.last_y);
-  // tolerance must clear a row's own name/price y-gap (~0.1-0.9pt apart) without reaching the
-  // next row (rh apart) -> half a row-height. A tight ±0.05 let a name and its own price fall on
-  // opposite sides of an insertion anchor that landed between them, shifting one but not the
-  // other and splitting the row (e.g. PASSION FRUIT RASPBERRY's price stranded on BOUNTY's row).
-  const TOL=rh/2;
-  const shiftFor=y=>{ let s=0;
-    for(const ry of removedYs) if(ry > y+TOL) s+=rh;      // removed above -> rows below rise
-    for(const iy of insertYs) if(iy > y+TOL) s-=rh;      // added above -> rows below drop
-    return s; };
+  // the reflow (removed rows rise, added rows and new sections push down) — see pageShift
+  const shiftFor=pageShift();
   for(const t of FM.tm_shifts){ const s=shiftFor(t.y); if(s) ops.push({s:t.span[0],e:t.span[1],rep:enc(fmtNum(t.y+s))}); }
   for(const id of removed){ const it=FM.items[id];
     for(const sp of it.name_spans) ops.push({s:sp[0],e:sp[1],rep:enc('[()]TJ')});
@@ -89,9 +80,11 @@ function menuOps(){
     it.prices.forEach((pr,ci)=>{ if('p'+it.id+'_'+ci in edits) for(const sp of pr.spans) ops.push({s:sp[0],e:sp[1],rep:tjBytes(edits['p'+it.id+'_'+ci])}); });
   }
   let addStr='';
-  const bySec={}; added.forEach(a=>{ (bySec[a.sec]=bySec[a.sec]||[]).push(a); });
-  for(const sec in bySec){ const tpl=FM.sections[sec].add, base=tpl.last_y+shiftFor(tpl.last_y);
+  // rows added to a baked section go under its last row; a new section lays out its own (nsForPage)
+  const bySec={}; added.forEach(a=>{ const sc=SECTIONS[a.sec]; if(sc&&!sc._new) (bySec[a.sec]=bySec[a.sec]||[]).push(a); });
+  for(const sec in bySec){ const tpl=SECTIONS[sec].add, base=tpl.last_y+shiftFor(tpl.last_y);
     bySec[sec].forEach((a,r)=>{ addStr+=itemBlock(a, tpl, base - rh*(r+1)); }); }
+  addStr+=nsForPage(shiftFor);
   return {ops, addStr};
 }
 /* chucky-2: THE SHEET HAS ROOM FOR ONE MORE ROW. Every added item pushes everything under it, down to
@@ -103,8 +96,225 @@ function menuOps(){
 const PAGE_FLOOR=12;   // the lowest a baseline may sit, in pt from the bottom edge
 function rowsSpare(){
   const low=Math.min(...FM.tm_shifts.map(t=>t.y));   // the footer: the lowest line that moves
-  return Math.floor((low-PAGE_FLOOR)/FM.row_h+1e-9) - (added.length-removed.size);
+  // where the footer lands after the reflow (removed rows raise it, added rows and new sections
+  // lower it), in whole rows above the floor — so a new section counts for exactly what it takes
+  return Math.floor((low+pageShift()(low)-PAGE_FLOOR)/FM.row_h+1e-9);
 }
+
+/* ============================ NEW SECTIONS ============================
+   A section the sheet never had ("GELATO", "TOPPINGS") — a red heading, its price-column labels
+   when it has several prices, and the rows added to it — printed in BOTH copies like everything
+   else. It goes after a baked section of your choice and takes its price layout from the section
+   you pick ("prices like ICE CREAM": small/medium/500gm, or like CANNOLI: one price). Everything
+   under it moves down by its height, the way an added row moves things down by one row, and the
+   footer's distance from the page edge decides how much fits (rowsSpare).
+   A new section is a synthetic entry at the end of SECTIONS (index = FM.sections.length + its place
+   in newSecs), so added[].sec, the cards and the saved state handle its rows unchanged. Its position
+   is never stored: it is laid out from its anchor on every pass.
+   THE HEADING FACE. The sheet's Loos Compressed Bold is a 14-glyph subset (space A B C E H I L M N
+   O R S T) and not a free font, so a title it can't set (GELATO, KULFI, SUNDAES…) prints in Barlow
+   Condensed ExtraBold instead (OFL, assets/fonts/), the closest open face to it, at the size that
+   matches its cap height. A title the subset CAN set still prints in the designer's own face. The
+   .ttf is embedded whole the first time a heading needs it, so a sheet without one exports exactly
+   as before. The same approach as the Capiche and Aiko editors' new sections. */
+let newSecs = [];   // [{id, after, tpl, title}]: after = the FM.sections index it follows, tpl = the one whose prices it copies
+let SECTIONS = [];  // FM.sections followed by the new ones — what added[].sec indexes
+// measured on the sheet: last row -> next heading 39.0, heading -> its first row 23.3, heading 0.4pt
+// left of the names; the column labels 4.4pt left of the first price, 0.53 above the heading
+const NS={ GAP:39.0, HEAD:23.3, SIZE:19.7744, TC:-0.01, RED:'0 0.988 1 0 k', HX:-0.4,
+  LBL:{ size:8, dx:-4.4, dy:-0.53, color:'0.695 0.672 0.637 0.738 k', step:[0,44.15,93.9], tc:[0.071,0.05,0.071] } };
+const HEAD={ res:'/T1_1', chars:'', widths:{}, cap:0.67,
+  fb:{ url:'/assets/fonts/BarlowCondensed-ExtraBold.ttf', ps:'BarlowCondensed-ExtraBold', res:'CkHead', cap:0.7, chars:'', widths:{}, ok:false, data:null, ref:null } };
+function headResolveFonts(){
+  try{
+    const fonts=doc.getPage(FM.menu_page).node.Resources().lookup(PDFName.of('Font')); if(!fonts) return;
+    for(const [k, ref] of fonts.entries()){
+      const f=doc.context.lookup(ref), base=String(f.get(PDFName.of('BaseFont'))||'');
+      if(!/LoosCompressed-Bold$/.test(base)) continue;
+      HEAD.res=k.asString();
+      const fc=+String(f.get(PDFName.of('FirstChar'))||32), W=doc.context.lookup(f.get(PDFName.of('Widths')));
+      HEAD.chars=''; if(W&&W.size) for(let i=0;i<W.size();i++){ const w=+String(W.get(i)); if(w>0){ const ch=String.fromCharCode(fc+i); HEAD.chars+=ch; HEAD.widths[ch]=w; } }
+      const fd=doc.context.lookup(f.get(PDFName.of('FontDescriptor'))); const cap=fd&&+String(fd.get(PDFName.of('CapHeight'))||0); if(cap>0) HEAD.cap=cap/1000;
+    }
+  }catch(e){ console.warn('heading font: kept the defaults', e); }
+}
+async function headLoadFont(){
+  const F=HEAD.fb;
+  try{
+    const r=await fetch(F.url); if(!r.ok) throw new Error('HTTP '+r.status);
+    const buf=await r.arrayBuffer(), P=FullFonts.parseOtf(buf); if(!P.ttf) throw new Error('not a TrueType font');
+    const b=new DataView(buf), u8=new Uint8Array(buf), T={}, tag=o=>String.fromCharCode(u8[o],u8[o+1],u8[o+2],u8[o+3]);
+    for(let i=0, n=b.getUint16(4); i<n; i++){ const o=12+16*i; T[tag(o)]=b.getUint32(o+8); }
+    const upm=b.getUint16(T.head+18), sc=v=>Math.round(v*1000/upm);
+    const widths=[], W={}; let chars='';
+    for(let c=32; c<=126; c++){ const g=P.cmap.get(c), w=g?P.width(g):0; widths.push(w); if(g){ const ch=String.fromCharCode(c); W[ch]=w; chars+=ch; } }
+    F.data={ ttf:P.ttf, widths, bbox:[36,38,40,42].map(o=>sc(b.getInt16(T.head+o))), asc:sc(b.getInt16(T.hhea+4)), desc:sc(b.getInt16(T.hhea+6)), capU:sc(upm*F.cap) };
+    F.chars=chars; F.widths=W; F.ok=true;
+  }catch(e){ console.warn('heading look-alike: new headings keep the subset’s letters', e); }
+}
+function headEmbed(){
+  const F=HEAD.fb; if(F.ref || !F.ok) return;
+  const d=F.data, ctx=doc.context;
+  const file=ctx.register(PDFRawStream.of(ctx.obj({ Length:d.ttf.length, Length1:d.ttf.length }), d.ttf));
+  const fd=ctx.register(ctx.obj({ Type:'FontDescriptor', FontName:F.ps, Flags:32, FontBBox:d.bbox, ItalicAngle:0, Ascent:d.asc, Descent:d.desc, CapHeight:d.capU, StemV:120, FontFile2:file }));
+  F.ref=ctx.register(ctx.obj({ Type:'Font', Subtype:'TrueType', BaseFont:F.ps, FirstChar:32, LastChar:126, Widths:d.widths, Encoding:'WinAnsiEncoding', FontDescriptor:fd }));
+  doc.getPage(FM.menu_page).node.Resources().lookup(PDFName.of('Font')).set(PDFName.of(F.res), F.ref);
+}
+const headText=t=>String(t||'').replace(/\s+/g,' ').toUpperCase().trim();
+function headUse(t){ t=headText(t); if(!t || [...t].every(c=>HEAD.chars.indexOf(c)>=0)) return null; return HEAD.fb.ok? {text:t} : null; }
+const headFbSize=()=>Math.round(NS.SIZE*HEAD.cap/HEAD.fb.cap*100)/100;
+function headBadChars(t){ t=headText(t); const out=[]; for(const c of new Set(t)){ if(HEAD.chars.indexOf(c)>=0) continue; if(HEAD.fb.ok && HEAD.fb.chars.indexOf(c)>=0) continue; out.push(c); } return out; }
+function headWidth(t){ t=headText(t); const U=headUse(t); let w=0;
+  if(U){ for(const c of t) w+=(HEAD.fb.widths[c]||0); return w/1000*headFbSize(); }
+  for(const c of t) w+=(HEAD.widths[c]||0); return w/1000*NS.SIZE + NS.TC*NS.SIZE*(t.length-1); }
+function nsSection(ns){
+  const T=FM.sections[ns.tpl]||FM.sections[0];
+  return { label:headText(ns.title)||'NEW SECTION', cols:(T.cols||[]).slice(), items:[], add:T.add, _new:ns.id, _after:ns.after, _tpl:ns.tpl };
+}
+function syncSections(){ SECTIONS=(FM.sections||[]).concat(newSecs.map(nsSection)); }
+function nsBase(){ return (FM.sections||[]).length; }
+const nsHeight=si=>NS.GAP+NS.HEAD-FM.row_h + FM.row_h*added.filter(a=>a.sec===si).length;   // what it adds below its anchor, beyond the row the anchor's next row would take
+// the inserts new sections make, for the reflow: content below an anchor's last row drops by the height
+function nsInserts(){ const base=nsBase(); return newSecs.map((ns,k)=>{ const A=FM.sections[ns.after]; return A? {y:A.add.last_y, h:nsHeight(base+k)} : null; }).filter(Boolean); }
+/* The page's reflow: rows below a removed row rise one row, rows below an added row (or a new
+   section) drop by what was put in. ONE function, read by the PDF (menuOps), the click boxes
+   (pvBoxes) and the room check (rowsSpare), so they can never disagree. The tolerance is half a
+   row: a row's own name and price sit ~0.1-0.9pt apart and must land on the same side of an anchor. */
+function pageShift(){
+  const rh=FM.row_h, TOL=rh/2;
+  const removedYs=[...removed].map(id=>FM.items[id].row_y);
+  const insertYs=added.filter(a=>SECTIONS[a.sec]&&!SECTIONS[a.sec]._new).map(a=>SECTIONS[a.sec].add.last_y);
+  const ins=nsInserts();
+  return y=>{ let s=0;
+    for(const ry of removedYs) if(ry > y+TOL) s+=rh;
+    for(const iy of insertYs) if(iy > y+TOL) s-=rh;
+    for(const q of ins) if(q.y > y+TOL) s-=q.h;
+    return s; };
+}
+// where every new heading and row goes: [{ns, si, sec, y}] and [{it, si, sec, y}]
+function nsLayout(shiftFor){
+  const out={heads:[], items:[]}; if(!newSecs.length) return out;
+  shiftFor=shiftFor||pageShift(); const rh=FM.row_h, base=nsBase(), stacked={};
+  newSecs.forEach((ns,k)=>{
+    const A=FM.sections[ns.after]; if(!A) return;
+    const si=base+k, sec=SECTIONS[si];
+    const nA=added.filter(a=>a.sec===ns.after).length;   // the anchor's own appended rows come first
+    let y=A.add.last_y+shiftFor(A.add.last_y)-rh*nA-(stacked[ns.after]||0);
+    const hy=y-NS.GAP; out.heads.push({ns, si, sec, y:hy});
+    let iy=hy-NS.HEAD+rh;
+    for(const it of added) if(it.sec===si){ iy-=rh; out.items.push({it, si, sec, y:iy}); }
+    stacked[ns.after]=(stacked[ns.after]||0)+nsHeight(si);
+  });
+  return out;
+}
+// the heading (and its column labels) for one copy of the sheet
+function nsHeadJS(h, c){
+  const title=headText(h.ns.title); if(!title) return '';
+  const tpl=h.sec.add, nx=tpl.name_x[c]; if(nx==null) return '';
+  const U=headUse(title); if(U) headEmbed();
+  let s='BT '+NS.RED+' '+(U? '/'+HEAD.fb.res : HEAD.res)+' 1 Tf '+(U? '0 Tc 0 Tw '+fmtNum(headFbSize())+' 0 0 '+fmtNum(headFbSize()) : fmtNum(NS.TC)+' Tc '+fmtNum(-NS.TC)+' Tw '+fmtNum(NS.SIZE)+' 0 0 '+fmtNum(NS.SIZE))
+    +' '+fmtNum(nx+NS.HX)+' '+fmtNum(h.y)+' Tm ('+escPdf(title)+')Tj ET\n';
+  const cols=h.sec.cols||[];
+  if(cols.length>1 && tpl.price_x && tpl.price_x[0] && tpl.price_x[0][c]!=null){
+    const L=NS.LBL, x0=tpl.price_x[0][c]+L.dx;
+    cols.forEach((lbl,i)=>{ const tc=L.tc[i]!=null?L.tc[i]:0.07;
+      s+='BT '+L.color+' '+tpl.name_font+' 1 Tf '+fmtNum(tc)+' Tc '+fmtNum(-tc)+' Tw '+fmtNum(L.size)+' 0 0 '+fmtNum(L.size)+' '+fmtNum(x0+(L.step[i]||0))+' '+fmtNum(h.y+L.dy)+' Tm ('+escPdf(String(lbl).toUpperCase())+')Tj ET\n'; });
+  }
+  return s;
+}
+function nsForPage(shiftFor){
+  if(!newSecs.length) return '';
+  const L=nsLayout(shiftFor); let out='q\n';
+  for(const h of L.heads) for(let c=0;c<(h.sec.add.name_x||[]).length;c++) out+=nsHeadJS(h, c);
+  for(const o of L.items) out+=itemBlock(o.it, o.sec.add, o.y);
+  return out+'Q\n';
+}
+function nsRemove(k){
+  const si=nsBase()+k;
+  added=added.filter(a=>a.sec!==si).map(a=>a.sec>si? Object.assign({},a,{sec:a.sec-1}) : a);
+  newSecs.splice(k,1); syncSections();
+}
+function nsTitleProblem(ns){
+  const t=headText(ns.title), T=FM.sections[ns.tpl]||FM.sections[0];
+  const bad=headBadChars(t);
+  if(bad.length) return {glyph:true, msg:'can’t print:  '+bad.map(c=>c===' '?'space':c).join('  ')};
+  if(!t) return {msg:'give the section a name'};
+  const room=((T.add.price_x&&T.add.price_x[0]&&T.add.price_x[0][0])||T.add.name_x[0]+330)-T.add.name_x[0]-12, w=headWidth(t);
+  if(w>room) return {msg:'too wide for the row — '+w.toFixed(0)+'pt of '+room.toFixed(0)+'pt'};
+  return null;
+}
+const nsTitleOk=ns=>headUse(ns.title)? '✓ prints in red — a close match to the sheet’s heading face' : '✓ prints in the sheet’s heading face';
+const nsColsText=sec=>(sec.cols&&sec.cols.length>1)? sec.cols.map(c=>String(c).toLowerCase()).join(' · ') : 'one price';
+function renderNewSections(ed){
+  const base=nsBase();
+  newSecs.forEach((ns,k)=>{
+    const si=base+k, sec=SECTIONS[si], items=added.filter(a=>a.sec===si), A=FM.sections[ns.after], T=FM.sections[ns.tpl]||FM.sections[0];
+    const hd=document.createElement('div'); hd.className='grouphd sechd'; hd.id='sec-ns-'+ns.id; hd.dataset.sec=sec.label;
+    hd.innerHTML='<span>'+esc(sec.label)+'</span>'+(sec.cols&&sec.cols.length>1?'<span class="cols">'+sec.cols.map(esc).join(' · ')+'</span>':'')+'<span class="n">'+items.length+' item'+(items.length===1?'':'s')+'</span>';
+    ed.appendChild(hd);
+    const card=document.createElement('div'); card.className='card seccard nscard'; card.dataset.ns=ns.id;   // the preview's click box finds it by this
+    const ttl=document.createElement('div'); ttl.className='sectitle'; ttl.textContent='NEW SECTION · AFTER '+(A?A.label:'')+' · PRICES LIKE '+(T?T.label:'')+' ('+nsColsText(T||{})+')'; card.appendChild(ttl);
+    const w=document.createElement('div'); w.className='secrow';
+    const lb=document.createElement('label'); lb.className='seclbl'; lb.textContent='Section name';
+    const inp=document.createElement('input'); inp.className='secinp'; inp.spellcheck=false; inp.value=ns.title||''; inp.placeholder='Gelato'; inp.maxLength=24;
+    const meta=document.createElement('div'); meta.className='afmeta';
+    w.append(lb, inp, meta); card.appendChild(w);
+    const check=()=>{ const pr=nsTitleProblem(ns);
+      meta.textContent=pr? pr.msg : nsTitleOk(ns); meta.className='afmeta'+(pr?' bad':'');
+      inp.classList.toggle('badglyph', !!(pr&&pr.glyph)); inp.classList.toggle('nsbad', !!(pr&&!pr.glyph)); };
+    inp.oninput=()=>{ ns.title=inp.value; syncSections(); hd.querySelector('span').textContent=SECTIONS[si].label; check(); try{ MEM.tick(); }catch(_){} schedulePreview(); updateGate(); };
+    check();
+    const note=document.createElement('div'); note.className='nsnote';
+    const spare=rowsSpare(); note.textContent= spare>0? 'Room for '+spare+' more row'+(spare===1?'':'s')+' on the sheet.' : spare===0? 'The sheet is full — remove a row to add another.' : 'The sheet overflows by '+(-spare)+' row'+(spare===-1?'':'s')+' — remove rows until it fits.';
+    note.classList.toggle('bad', spare<0); note.classList.toggle('nsbad', spare<0);
+    card.appendChild(note);
+    const btns=document.createElement('div'); btns.className='nsbtns';
+    const addB=document.createElement('button'); addB.type='button'; addB.textContent='+ Add item here';
+    if(spare<=0){ addB.disabled=true; addB.title='The sheet is full — remove a row first'; }
+    addB.onclick=()=>{ const ncols=(sec.cols&&sec.cols.length>1)?sec.cols.length:1; added.push({sec:si, name:'', prices:Array(ncols).fill(''), _id:++addSeq}); buildEditor(); };
+    const delB=document.createElement('button'); delB.type='button'; delB.className='nsdel'; delB.textContent='Remove section';
+    delB.onclick=()=>{ if(items.length && !confirm('Remove the section “'+(ns.title||'')+'” and its '+items.length+' row'+(items.length===1?'':'s')+'?')) return;
+      nsRemove(k); try{ MEM.tick(); }catch(_){} buildEditor(); regenerate().then(renderPreview); };
+    btns.append(addB, delB); card.appendChild(btns); ed.appendChild(card);
+    for(const a of items) ed.appendChild(addedCard(a, sec));
+  });
+}
+function renderAddSectionZone(ed){
+  const zone=document.createElement('div'); zone.className='addzone nszone';
+  const btn=document.createElement('button'); btn.className='addbtn'; btn.textContent='+  Add a new section';
+  const form=document.createElement('div'); form.className='addform';
+  const spare=rowsSpare(), need=3;   // a heading is about two rows, and a section wants a first row
+  form.innerHTML='<label>Section name</label><input type="text" class="ns-title" maxlength="24" placeholder="Gelato">'
+    +'<div class="afmeta ns-tmeta"></div>'
+    +'<label>Prices like</label><select class="af-sec ns-tpl">'+FM.sections.map((s,i)=>'<option value="'+i+'"'+(i===FM.sections.length-1?' selected':'')+'>'+esc(s.label)+' · '+esc(nsColsText(s))+'</option>').join('')+'</select>'
+    +'<label>Goes after</label><select class="af-sec ns-after">'+FM.sections.map((s,i)=>'<option value="'+i+'"'+(i===FM.sections.length-1?' selected':'')+'>'+esc(s.label)+'</option>').join('')+'</select>'
+    +'<div class="afmeta ns-wmeta"></div>'
+    +'<div class="afbtns"><button class="afadd">Create section</button><button class="afcancel">Cancel</button></div>';
+  btn.onclick=()=>{ form.classList.toggle('open'); if(form.classList.contains('open')) form.querySelector('.ns-title').focus(); };
+  zone.append(btn, form); ed.appendChild(zone);
+  const tEl=form.querySelector('.ns-title'), pEl=form.querySelector('.ns-tpl'), aEl=form.querySelector('.ns-after'), tm=form.querySelector('.ns-tmeta'), wm=form.querySelector('.ns-wmeta'), go=form.querySelector('.afadd');
+  const draft=()=>({id:'', after:+aEl.value, tpl:+pEl.value, title:tEl.value.trim()});
+  function validate(){
+    const ns=draft(), tp=nsTitleProblem(ns);
+    tm.textContent=tp? tp.msg : nsTitleOk(ns); tm.classList.toggle('bad', !!(tp&&ns.title));
+    if(!ns.title) tm.textContent='e.g. Gelato, Kulfi, Toppings';
+    const ok=spare>=need;
+    wm.textContent=ok? 'Everything below it moves down. It needs about three rows: a heading and its first item.'
+      : 'Not enough room: a new section needs about three rows, and the sheet has '+Math.max(0,spare)+'. Remove '+(need-Math.max(0,spare))+' item'+(need-Math.max(0,spare)===1?'':'s')+' first.';
+    wm.classList.toggle('bad', !ok);
+    go.disabled=!ok || !!tp;
+  }
+  tEl.oninput=pEl.onchange=aEl.onchange=validate; validate();
+  form.querySelector('.afcancel').onclick=()=>form.classList.remove('open');
+  go.onclick=()=>{ if(go.disabled) return;
+    const ns=draft(); ns.id='s'+Date.now().toString(36); newSecs.push(ns); syncSections();
+    const si=nsBase()+newSecs.length-1, sec=SECTIONS[si], ncols=(sec.cols&&sec.cols.length>1)?sec.cols.length:1;
+    added.push({sec:si, name:'', prices:Array(ncols).fill(''), _id:++addSeq});   // straight into its first row
+    try{ MEM.tick(); }catch(_){} buildEditor(); regenerate().then(renderPreview);
+    const c=document.querySelector('#editor .nscard[data-ns="'+ns.id+'"]'); if(c){ c.scrollIntoView({behavior:'smooth', block:'center'}); const n=c.nextElementSibling&&c.nextElementSibling.querySelector('input.name'); if(n) setTimeout(()=>n.focus(),300); }
+  };
+}
+
 /* QRTOOL:BEGIN — generated from src/shared/qrtool/qrtool.src.js by `npm run qr:inject`. Edit there, not here. */
 /* ============ QR CODES — click one on the preview to resize / move / change link / remove; "+ QR" adds one ============
    Same tool, same interface in every editor. It never touches the page streams the byte engine owns:
@@ -1156,12 +1366,7 @@ function pvHitLayer(){
 function pvBoxes(p){
   if(p!==FM.menu_page) return [];
   const rh=FM.row_h||20.9;
-  const removedYs=[...removed].map(id=>FM.items[id].row_y);
-  const insertYs=added.map(a=>FM.sections[a.sec].add.last_y);
-  const shiftFor=y=>{ let s=0;
-    for(const ry of removedYs) if(ry> y+0.05) s+=rh;
-    for(const iy of insertYs) if(iy> y+0.05) s-=rh;
-    return s; };
+  const shiftFor=pageShift();   // the same reflow the PDF is written with
   const out=[];
   FM.sections.forEach(sec=>{
     const sz=(sec.add&&sec.add.name_size)||12.5;
@@ -1176,6 +1381,18 @@ function pvBoxes(p){
       });
     }
   });
+  /* Rows added to a baked section, and new sections with their rows, get boxes too (one per copy),
+     from the same layout the PDF is written with. A row is keyed by its place in `added` (its card
+     carries data-added), a section by its id (data-ns on its card). */
+  const rowBox=(id, tpl, y)=>{ const sz=tpl.name_size||12.5, pxs=tpl.price_x||[], lastPx=pxs.length? pxs[pxs.length-1] : null;
+    (tpl.name_x||[]).forEach((nx,k)=>{ const right=lastPx? lastPx[k]+26 : nx+240; out.push({id, x0:nx-6, x1:right, top:y+sz*0.86, bot:y-(rh-sz*0.86)}); }); };
+  const bySec={}; added.forEach(a=>{ const sc=SECTIONS[a.sec]; if(sc&&!sc._new) (bySec[a.sec]=bySec[a.sec]||[]).push(a); });
+  for(const sec in bySec){ const tpl=SECTIONS[sec].add, base=tpl.last_y+shiftFor(tpl.last_y);
+    bySec[sec].forEach((a,r)=>rowBox('added:'+added.indexOf(a), tpl, base-rh*(r+1))); }
+  const L=nsLayout(shiftFor);
+  for(const h of L.heads){ const w=headWidth(h.ns.title)||40;
+    (h.sec.add.name_x||[]).forEach(nx=>out.push({id:'ns:'+h.ns.id, x0:nx-6, x1:nx+Math.max(40,w)+8, top:h.y+NS.SIZE*0.75, bot:h.y-5})); }
+  for(const o of L.items) rowBox('added:'+added.indexOf(o.it), o.sec.add, o.y);
   return out;
 }
 function pvSync(){
@@ -1188,7 +1405,7 @@ function pvSync(){
     d.className='hitbox'+(_pvSel===b.id?' sel':'');
     d.style.left=(b.x0/W*100)+'%'; d.style.width=(Math.max(10,b.x1-b.x0)/W*100)+'%';
     d.style.top=((H-b.top)/H*100)+'%'; d.style.height=(Math.max(8,b.top-b.bot)/H*100)+'%';
-    d.title='Click to edit this item';
+    d.title=String(b.id).startsWith('ns:')? 'Click to edit this section' : 'Click to edit this item';
     d.addEventListener('click',()=>pvJump(b.id));
     hl.appendChild(d);
   }
@@ -1196,11 +1413,14 @@ function pvSync(){
 }
 function pvJump(id){
   _pvSel=id; pvSync();
-  const card=document.querySelector('#editor .card[data-key="i'+id+'"]');
+  const cssEsc=v=>(window.CSS&&CSS.escape? CSS.escape(String(v)) : String(v)), q=sel=>document.querySelector(sel);
+  const card=String(id).startsWith('added:')? q('#editor .card[data-added="'+cssEsc(String(id).slice(6))+'"]')
+           : String(id).startsWith('ns:')? q('#editor .nscard[data-ns="'+cssEsc(String(id).slice(3))+'"]')
+           : q('#editor .card[data-key="i'+cssEsc(id)+'"]');
   if(!card) return;
   card.scrollIntoView({behavior:'smooth', block:'center'});
   card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash');
-  const f=card.querySelector('input.name'); if(f) setTimeout(()=>f.focus(),260);
+  const f=card.querySelector('input.name')||card.querySelector('input.secinp'); if(f) setTimeout(()=>f.focus(),260);
 }
 async function renderPreview(){
   const my=++renderToken; document.getElementById('busy').classList.add('on');
@@ -1259,7 +1479,7 @@ function nameTooLong(it, val){ return String(val||'').length > nameMaxChars(it);
 function updateGate(){ const pill=document.getElementById('flagpill'), ex=document.getElementById('export');
   let bad=0, soft=0;
   document.querySelectorAll('#editor .warnline').forEach(w=>{ if(w.dataset.level==='bad') bad++; else soft++; });
-  const over=document.querySelectorAll('#editor input.name.toolong').length;
+  const over=document.querySelectorAll('#editor input.name.toolong, #editor .nsbad').length + document.querySelectorAll('#editor .secinp.badglyph').length;
   const full=rowsSpare()<0;   // chucky-2: rows pushed off the bottom of the sheet (see rowsSpare)
   if(bad||over||full){ pill.className='pill bad'; ex.disabled=true;
     const b=[]; if(full) b.push('page overflows — remove an item'); if(over) b.push(over+' too long'); if(bad) b.push(bad+' spelling');
@@ -1329,7 +1549,7 @@ function buildEditor(){
         if(rowsSpare()<=0){ rb.disabled=true; rb.title='The page is full — remove another item first'; }   // chucky-2: see rowsSpare
         strip.appendChild(rb); ed.appendChild(strip); continue;
       }
-      const card=document.createElement('div'); card.className='card';
+      const card=document.createElement('div'); card.className='card'; card.dataset.key='i'+it.id;   // what pvJump looks the card up by
       const name=document.createElement('input'); name.className='name'; name.spellcheck=false;
       name.value=('n'+it.id in edits)?edits['n'+it.id]:it.name; name.dataset.orig=it.name;
       const markLong=()=>{
@@ -1351,16 +1571,7 @@ function buildEditor(){
       card.appendChild(rm); ed.appendChild(card);
     }
     // newly-added items in this section
-    added.forEach(a=>{ if(a.sec!==si) return;
-      const card=document.createElement('div'); card.className='card addcard';
-      const name=document.createElement('input'); name.className='name'; name.spellcheck=false; name.value=a.name; name.placeholder='NEW FLAVOR'; name.dataset.added='1';
-      name.oninput=()=>{ const v=cleanName(name.value); if(name.value!==v){const p=name.selectionStart;name.value=v;name.setSelectionRange(p-1,p-1);} a.name=v; validateNames(); schedulePreview(); };
-      card.appendChild(name);
-      card.appendChild(priceCols(sec, ci=>a.prices[ci], (ci,v)=>{ a.prices[ci]=v; }));
-      const rm=document.createElement('button'); rm.className='rm'; rm.title='Discard'; rm.textContent='✕';
-      rm.onclick=()=>{ const k=added.indexOf(a); if(k>=0)added.splice(k,1); buildEditor(); regenerate().then(renderPreview); };
-      card.appendChild(rm); ed.appendChild(card);
-    });
+    added.forEach(a=>{ if(a.sec!==si) return; ed.appendChild(addedCard(a, sec)); });
     // add-item button
     const btn=document.createElement('button'); btn.className='addbtn'; btn.textContent='+  Add item to '+sec.label;
     if(rowsSpare()<=0){ btn.disabled=true; btn.textContent='+  Add item to '+sec.label+' — the page is full: remove an item first'; }   // chucky-2: see rowsSpare
@@ -1368,8 +1579,21 @@ function buildEditor(){
       added.push({sec:si, name:'', prices:Array(ncols).fill(''), _id:++addSeq}); buildEditor(); };
     ed.appendChild(btn);
   });
+  renderNewSections(ed);
+  renderAddSectionZone(ed);
   validateNames();
   if(typeof syncRail==='function') syncRail();
+}
+// a row the user added, in a baked section or a new one: its name and prices, editable in place
+function addedCard(a, sec){
+  const card=document.createElement('div'); card.className='card addcard'; card.dataset.added=String(added.indexOf(a));   // the preview's click box finds it by this
+  const name=document.createElement('input'); name.className='name'; name.spellcheck=false; name.value=a.name; name.placeholder='NEW FLAVOR'; name.dataset.added='1';
+  name.oninput=()=>{ const v=cleanName(name.value); if(name.value!==v){const p=name.selectionStart;name.value=v;name.setSelectionRange(p-1,p-1);} a.name=v; validateNames(); schedulePreview(); };
+  card.appendChild(name);
+  card.appendChild(priceCols(sec, ci=>a.prices[ci], (ci,v)=>{ a.prices[ci]=v; }));
+  const rm=document.createElement('button'); rm.className='rm'; rm.title='Discard'; rm.textContent='\u2715';
+  rm.onclick=()=>{ const k=added.indexOf(a); if(k>=0)added.splice(k,1); buildEditor(); regenerate().then(renderPreview); };
+  card.appendChild(rm); return card;
 }
 document.querySelectorAll('.tabs button').forEach(b=>b.addEventListener('click',()=>{
   document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
@@ -1426,8 +1650,14 @@ document.getElementById('export').addEventListener('click', async()=>{
 // ---- edit-memory glue (churnd) ----
 const MEM_BRAND='churnd';
 let memBaseVer='';
-function memSnapshot(){ return { qr:QRK.snap(), edits:{...edits}, removed:[...removed], added }; }
-function memApply(st){ QRK.load(st&&st.qr); for(const k in edits) delete edits[k]; Object.assign(edits, st.edits||{}); removed=new Set(st.removed||[]); added=st.added||[]; }
+function memSnapshot(){ const s={ qr:QRK.snap(), edits:{...edits}, removed:[...removed], added };
+  if(newSecs.length) s.newSecs=JSON.parse(JSON.stringify(newSecs));   // only when there is one: older sheets snapshot as they did
+  return s; }
+function memApply(st){ QRK.load(st&&st.qr); for(const k in edits) delete edits[k]; Object.assign(edits, st.edits||{}); removed=new Set(st.removed||[]);
+  // sections first: rows in a new section point at its synthetic SECTIONS entry
+  newSecs=(Array.isArray(st.newSecs)?st.newSecs:[]).filter(ns=>ns&&FM.sections[ns.after]&&FM.sections[ns.tpl]).map(ns=>({id:String(ns.id), after:+ns.after, tpl:+ns.tpl, title:String(ns.title||'')}));
+  syncSections();
+  added=(st.added||[]).filter(a=>SECTIONS[a.sec]); }
 function memRebuild(){ buildEditor(); regenerate().then(renderPreview); }
 // ============ EDIT MEMORY — autosave + resume + version history (per brand) ============
 // Glue each editor must define BEFORE this block:
@@ -1555,6 +1785,9 @@ async function boot(){
     const full = await FullFonts.embed(doc, { AOMonoBold:'/assets/fonts/Aomono-Bold.otf',
       AOMonoRegular:'/assets/fonts/Aomono-Regular.otf', AOMonoBlack:'/assets/fonts/Aomono-Black.otf' });
     if(full.AOMonoBold) FM.allowed = Object.assign({}, FM.allowed, { name: full.AOMonoBold });
+    syncSections();               // SECTIONS = the sheet's sections (new ones join when a saved state has them)
+    headResolveFonts();           // new sections' headings: the sheet's own Loos, and its look-alike for letters it lacks
+    await headLoadFont();
     for(let p=0;p<doc.getPageCount();p++){
       const page=doc.getPage(p); const ref=page.node.get(PDFName.of('Contents'));
       const stream=doc.context.lookup(ref);
