@@ -524,22 +524,32 @@ Carried over from the old editor, not yet fixed:
 ## The Beshak menu
 
 `public/beshak/` holds `beshak.pdf`, `fieldmap.json`, the dictionaries, `engine.js` and an empty
-`start-state.json`. The PDF is `Beshak New.pdf` (the Canva export of 17 Sep 2026, sent on 29 Sep: 31
-dishes over APPS, BREADS and MAINS on page 1 and DRINKS and DESSERT on page 2) run through the old
-repo's builder, `src/beshak/build_beshak.js`. That uncompresses the streams the editor writes and
-merges each font's two per-page subsets, and changes nothing that prints. Beshak's text is not in
-the page stream but in a Form XObject per page, one glyph per string, so the fieldmap names a stream
-for every field. With no edits, the editor exports every one of those streams exactly as the PDF
-has it.
+`start-state.json`. The PDF is `beshak menu.pdf` (the Canva export sent on 16 Oct 2026: 32 dishes —
+DRINKS, BREADS, MAINS and DESSERTS on page 1, APPS on page 2 with the tiger artwork and the BESHAK
+logo) run through `dev/build-beshak.mjs`, which changes nothing that prints. To rebuild for a new
+export:
 
-**The builder needed one fix, made for this build.** A text block can switch fonts part-way (the
-artwork sets `/`, `'`, `(`, `)` and `&` in NotoSans between runs of the display and body faces), and
-the builder labelled every run in a block with the block's *last* font. So Bappa's Modak's
-description was filed as NotoSans, which has no letters, and its "&" and Sourdough Naan's ")" were
-left out of their descriptions. The fix records each show-op's own font (`parseText` in `lib.js`)
-and uses it wherever a run is measured or written (`build_beshak.js`), keeping the block's font for
-deciding which runs are names. Against the unfixed build it changes exactly those two descriptions
-and the BREADS column's width, which had run 4pt into MAINS. Apply the same fix before rebuilding.
+```
+node dev/build-beshak.mjs "path/to/beshak menu.pdf"
+```
+
+It writes the three files and checks every byte span it recorded against the saved PDF. What it
+does: Beshak's text is not in the page stream but in a Form XObject per page, one glyph per string,
+so the builder stores those streams (and the gm/ml label XObjects) uncompressed, names a stream for
+every field, and merges each font family's two per-page subsets into one program so both pages can
+set every letter the designer used anywhere. With no edits, the editor exports every stream exactly
+as the PDF has it. The dishes, sections, columns and allergen markers are read from the artwork; the
+gluten icon (a raster in the artwork) is stamped from the vector trace in `dev/beshak-gluten.json`.
+
+**Page 2 prints upside down.** The designer rotated everything on the back page by 180° so the fold
+reads the right way up, and the export keeps that: open the exported PDF and page 2 is upside down,
+as the designer's file is. The builder stores that page's artwork UPRIGHT and lets the page content
+flip it back as a whole (`page_flip` in the fieldmap), so the engine sees an ordinary page, the
+live preview and Full Preview show it the way it reads (Full Preview says so under the page; its
+Print and Download keep the file as it is), and a QR code you add to it is drawn through the same
+flip. (A
+first base, `Beshak New.pdf` of 17 Sep 2026, was built with the old repo's `src/beshak/build_beshak.js`;
+that builder is not in this repo.)
 
 Changes from the old editor:
 
@@ -564,10 +574,10 @@ Changes from the old editor:
 - **New sections** ("+ Add a new section", e.g. Chaats). A new section is a red heading in the menu's
   heading style with its rule, and the dishes added to it. It goes under a section of your choice,
   in that section's column with the most room, below its last dish, and stops above the next heading
-  down or the page's bottom (page 2's bottom is the tiger artwork). This menu is full: every section
-  reads "no room" until a dish is removed, then the heading plus one dish fits under BREADS or
-  DRINKS. Its dishes are ordinary added dishes (same card, same checks). Clicking the heading or a
-  dish on the preview opens its card. Saved as `newSecs` (only written when there is one).
+  down, the next divider rule, the tiger artwork or the page's bottom (`floors` in the fieldmap).
+  In this menu only DESSERTS has room; the others read "no room" until a dish is removed. Its
+  dishes are ordinary added dishes (same card, same checks). Clicking the heading or a dish on the
+  preview opens its card. Saved as `newSecs` (only written when there is one).
 - Loading and publishing go through MenuState, as for Capiche and Aiko.
 - Edit memory records which PDF edits were made for. It stored a function instead, so edits for an
   older PDF could not be told apart; autosaves from the old editor are shown but not resumed.

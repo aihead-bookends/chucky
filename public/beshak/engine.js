@@ -12,8 +12,13 @@
 //    per STREAM (`PRISTINE[id]`) and every field says which stream its spans index.
 //  * Text is Identity-H — each glyph is a 2-byte CID inside its own tiny string in a kerned TJ
 //    array — so writing text means re-encoding through the font's unicode->CID table.
-//  * On page 2 the dairy/gluten/sesame markers are baked into the background raster. Removing one
-//    means painting its (pure white) box out; anything still wanted is re-stamped as a vector.
+//  * Every marker is a vector group (or the gluten raster placed by a `cm`) with a byte span, so a
+//    removed marker is cut out and anything still wanted is re-stamped. (A marker baked into a
+//    background raster — the first base had those on page 2 — is painted out instead, see patchBox.)
+//  * chucky-2: page 2 of the designer's file is printed upside down (the fold reads the right way up).
+//    dev/build-beshak.mjs stores its artwork UPRIGHT and lets the page flip it as a whole, so every
+//    coordinate here is an ordinary upright one; the preview rotates that page so it reads, and a QR
+//    code added to it is drawn through the same flip (`FM.page_flip`).
 
 const { PDFDocument, PDFName, PDFNumber, PDFRawStream, PDFRef } = PDFLib;
 
@@ -383,7 +388,7 @@ function extraLines(name, desc) {
   const i = c.ids.indexOf(name.id);
   const next = i >= 0 && i + 1 < c.ids.length ? byId[c.ids[i + 1]] : null;
   const bottom = desc.lines[desc.lines.length - 1].y;
-  const floor = next ? next.y + 12 : 30;
+  const floor = next ? next.y + 12 : (typeof nsFloor === 'function' ? nsFloor(c) + 4 : 30);   // chucky-2: the tiger, a divider
   return Math.max(0, Math.floor((bottom - floor) / desc.pitch));
 }
 
@@ -520,8 +525,8 @@ function lookWidth(text, key, size) { const L = LOOK[key]; let w = 0; for (const
    The heading is set in TG Gasoline when its subset has the letters (A B D E M R S and a few
    lowercase), else in the look-alike heading face (see LOOK). */
 let newSecs = [];   // [{id, col, title}]: col = the baked column it goes under
-const NS = { SIZE: 25.5621, HX: 2, ABOVE: 3, FIRST: 25.5, RULE_DY: -8.4, RULE_W: 15.0057, GAP: 10, INK: 12, FLOOR: { 0: 34, 1: 345 } };
-// the page's own bottom edge for a column: a margin on page 1, the tiger artwork's top on page 2
+const NS = { SIZE: 25.5621, HX: 2, ABOVE: 3, FIRST: 25.5, RULE_DY: -8.4, RULE_W: 15.0057, GAP: 10, INK: 12, FLOOR: { 0: 34, 1: 34 } };
+// the page's own bottom margin; the divider rules and the artwork bands (the tiger) come from FM.floors
 function nsCol(ns) {
   const c = FM.columns.find((x) => x.id === ns.col); if (!c) return null;
   return { id: 'ns:' + ns.id, page: c.page, section: String(ns.title || ''), x: c.x, width: c.width, pitch: c.pitch, ids: c.ids, bottom: c.bottom, _ns: ns, _tpl: c };
@@ -539,6 +544,7 @@ function colNextY(c) {
 function nsFloor(c) {
   let f = NS.FLOOR[c.page] != null ? NS.FLOOR[c.page] : 34;
   for (const s of FM.sections) if (s.page === c.page && s.y < c.bottom && s.x1 > c.x && s.x0 < c.x + c.width) f = Math.max(f, s.y + 30);
+  for (const d of FM.floors || []) if (d.page === c.page && d.y < c.bottom && d.x1 > c.x && d.x0 < c.x + c.width) f = Math.max(f, d.y + 8);   // chucky-2: rules and artwork
   return f;
 }
 /** Every new section's place: heading baseline, first dish, pitch, and the room left under it. */
@@ -743,6 +749,8 @@ const MARKER_LABEL = { dairy: 'Dairy', gluten: 'Gluten', sesame: 'Sesame', jain:
 
 // ============================================================ edit-state plumbing
 const curText = (f) => (edits[f.id] !== undefined ? edits[f.id] : f.display);
+/** chucky-2: is this page printed upside down? (its artwork is stored upright, see the file header) */
+const pageFlipped = (p) => !!(FM && FM.page_flip && FM.page_flip[p]);
 const memBaseVer = () => 'v' + (pdfBytesOrig ? pdfBytesOrig.length : 0);
 
 function memSnapshot() {
@@ -1852,7 +1860,12 @@ const QRK = (() => {
         pi.refs = { before, open: doc.context.register(raw('q\n')), close: doc.context.register(raw('\nQ\n')), over: doc.context.register(raw('')) };
         pi.refs.top = doc.context.largestObjectNumber;
       }
-      doc.context.assign(pi.refs.over, raw(mine.map(overlayOps).join('')));
+      let over = mine.map(overlayOps).join('');
+      if (typeof pageFlipped === 'function' && pageFlipped(p)) {   // chucky-2: the page prints upside down; so does the QR
+        const sz = (FM.page_sizes || [])[p] || [595.5, 842.25];
+        over = 'q -1 0 0 -1 ' + num(sz[0]) + ' ' + num(sz[1]) + ' cm\n' + over + 'Q\n';
+      }
+      doc.context.assign(pi.refs.over, raw(over));
       const inner = pi.orig && pi.orig.asArray ? pi.orig.asArray() : [pi.orig];
       pi.node.set(PDFName.of('Contents'), doc.context.obj([pi.refs.open, ...inner, pi.refs.close, pi.refs.over]));
     }
@@ -2277,8 +2290,9 @@ async function renderPreview() {
     const page = await doc.getPage(activePage + 1);
     const wrap = document.getElementById('wrap');
     const vw = Math.max(240, (wrap ? wrap.clientWidth : 480) - 8);
-    const vp0 = page.getViewport({ scale: 1 });
-    const vp = page.getViewport({ scale: vw / vp0.width });
+    const rotation = pageFlipped(activePage) ? 180 : 0;   // chucky-2: page 2 prints upside down; show it upright
+    const vp0 = page.getViewport({ scale: 1, rotation });
+    const vp = page.getViewport({ scale: vw / vp0.width, rotation });
     canvas.width = vp.width; canvas.height = vp.height;
     await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
     const tag = document.getElementById('ptag');
@@ -2341,7 +2355,8 @@ async function openFullPreview() {
   if (btn) { btn.disabled = true; btn.textContent = 'Preparing…'; }
   try {
     const bytes = await regenerate();
-    await pvPut(id, { bytes: bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), file: 'Beshak_Menu.pdf', title: 'Beshak — Menu', back: location.pathname, t: Date.now() });
+    // chucky-2: `rotate` tells the preview page to show a page that prints upside down the right way up
+    await pvPut(id, { bytes: bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), file: 'Beshak_Menu.pdf', title: 'Beshak — Menu', back: location.pathname, t: Date.now(), rotate: (FM.page_flip || []).map((f) => (f ? 180 : 0)) });
     if (!win) say('warn', 'Your browser blocked the preview tab. Allow pop-ups for this site, then press <b>Full Preview</b> again.');
   } catch (e) {
     try { await pvPut(id, { error: String((e && e.message) || e), t: Date.now() }); } catch (_) { /* the tab says it timed out */ }

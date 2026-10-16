@@ -152,6 +152,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/p
 const $=id=>document.getElementById(id);
 const stateEl=$('state'), scroll=$('scroll'), pagesEl=$('pages');
 let PDF=null, SCALE=1, MODE='fitw', PAGECOUNT=0, BYTES=null, FILENAME='menu.pdf', BACKURL='/chucky/';
+let ROT=[];   // per page, degrees to turn the VIEW: a page the designer prints upside down (Beshak's page 2) is shown the right way up; Print and Download keep the file as it is
 let canvases=[], renderTok=0;
 
 function showState(msg,hint,isErr){ stateEl.classList.remove('hide');
@@ -166,15 +167,16 @@ async function build(){
   for(let i=1;i<=PAGECOUNT;i++){
     const pg=await PDF.getPage(i);
     if(tok!==renderTok) return;
-    const vp0=pg.getViewport({scale:1});
+    const rot=ROT[i-1]||0;
+    const vp0=pg.getViewport({scale:1,rotation:rot});
     let s=SCALE;
     if(MODE==='fitw') s=(scroll.clientWidth-48)/vp0.width;
     else if(MODE==='fitp') s=Math.min((scroll.clientWidth-48)/vp0.width,(scroll.clientHeight-56)/vp0.height);
     s=Math.max(.1,Math.min(6,s)); SCALE=s;
-    const vp=pg.getViewport({scale:s}), dpr=DPR();
+    const vp=pg.getViewport({scale:s,rotation:rot}), dpr=DPR();
     const wrap=document.createElement('div'); wrap.className='pw';
     wrap.style.width=vp.width+'px'; wrap.style.height=vp.height+'px';
-    const lab=document.createElement('div'); lab.className='plabel'; lab.textContent='Page '+i+' of '+PAGECOUNT;
+    const lab=document.createElement('div'); lab.className='plabel'; lab.textContent='Page '+i+' of '+PAGECOUNT+(rot?' · shown the right way up — it prints turned around, as the designer made it':'');
     const cv=document.createElement('canvas');
     cv.width=Math.floor(vp.width*dpr); cv.height=Math.floor(vp.height*dpr);
     cv.style.width=vp.width+'px'; cv.style.height=vp.height+'px';
@@ -242,6 +244,7 @@ async function load(rec){
   BYTES=rec.bytes instanceof Uint8Array ? rec.bytes : new Uint8Array(rec.bytes);
   FILENAME=rec.file||'menu.pdf';
   BACKURL=rec.back||'/chucky/';
+  ROT=Array.isArray(rec.rotate)?rec.rotate.map(r=>+r||0):[];
   if(rec.title){ $('doctitle').textContent=rec.title; document.title='Preview — '+rec.title; }
   showState('Rendering…','');
   // pdf.js takes ownership of the buffer it is given, so hand it a copy — BYTES stays intact for
